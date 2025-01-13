@@ -4,12 +4,12 @@ LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 PR = "r0"
 
-DOTFILES_REF="5f61e185231919b89233b841841ef30c37bc63be"
+DOTFILES_REF="fa97e077944d36e320201a2627cc6a75e4f1bceb"
 
 SRC_URI:append = " file://home/pi/.ssh/authorized_keys"
 SRC_URI:append = " file://etc/security/limits.d/rt.conf"
 SRC_URI:append = " https://github.com/AustinSchuh/.dotfiles/archive/${DOTFILES_REF}.zip"
-SRC_URI[sha256sum] = "bf7ae9cad99461a92ae43e5e2ea9ebe4951d34f42d9004990d8ff6628bacb272"
+SRC_URI[sha256sum] = "780059058934f78ad594ee7ff5aa93fae80b92bc53271826f0af8ee5c7fd5b1e"
 
 do_install[network] = '1'
 
