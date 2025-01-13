@@ -9,6 +9,9 @@ PACKAGECONFIG = ""
 do_install:append() {
     install -D -m0644 ${WORKDIR}/eth0.network ${D}${base_prefix}/etc/systemd/network/eth0.network
     install -D -m0644 ${WORKDIR}/logind.conf ${D}${systemd_unitdir}/logind.conf.d/00-${PN}.conf
+
+    # Don't write to a nonexistant syslog.
+    sed -i 's/ForwardToSyslog=yes/ForwardToSyslog=no/' ${D}${systemd_unitdir}/journald.conf.d/00-${PN}.conf
 }
 
 FILES:${PN}:append = "\
