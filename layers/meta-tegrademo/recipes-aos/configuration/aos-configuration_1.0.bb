@@ -32,7 +32,6 @@ do_install() {
 
     install_content 0644 "etc/sysctl.d/sctp.conf" "root:root"
     install_content 0555 "etc/bash_completion.d/aos_dump_autocomplete" "root:root"
-    #install_content 0644 "etc/fstab" "root:root"
     install_content 0644 "etc/modprobe.d/audio.conf" "root:root"
     install_content 0644 "etc/modprobe.d/can.conf" "root:root"
     install_content 0644 "etc/udev/rules.d/can.rules" "root:root"
@@ -60,7 +59,6 @@ FILES:${PN}:append = " ${base_prefix}/etc/bash_completion.d/aos_dump_autocomplet
 FILES:${PN}:append = " ${base_prefix}/etc/modprobe.d/audio.conf"
 FILES:${PN}:append = " ${base_prefix}/etc/modprobe.d/can.conf"
 FILES:${PN}:append = " ${base_prefix}/etc/udev/rules.d/can.rules"
-#FILES:${PN}:append = " ${base_prefix}/etc/fstab"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/network/80-cana.network"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/network/80-canb.network"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/network/80-canc.network"
