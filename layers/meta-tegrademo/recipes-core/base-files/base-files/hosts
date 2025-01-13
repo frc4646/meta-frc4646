@@ -9,7 +9,7 @@ ff02::2 ip6-allrouters
 
 127.0.1.1 jetson-orin-nano-som
 
-10.67.67.101    orin-6767-1 orin1
-10.67.67.102    orin-6767-2 orin2
-10.67.67.103    orin-6767-3 orin3 imu
-10.67.67.2      roborio
+10.46.46.101    orin-4646-1 orin1
+10.46.46.102    orin-4646-2 orin2
+10.46.46.103    orin-4646-3 orin3 imu
+10.46.46.2      roborio
