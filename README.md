@@ -27,3 +27,9 @@ bitbake demo-image-base && ../to_xfs.py tmp/deploy/images/jetson-orin-nano-som/d
 Note: this hasn't been tested yet with a fresh checkout, not everything might be captured yet.
 
 To flash, extract the image, then run `sudo ./initrd-flash` with the orin in bootloader mode, connected over USB.
+
+
+To view the serial console:
+```
+python3 /usr/lib/python3/dist-packages/serial/tools/miniterm.py /dev/ttyUSB0 115200
+```
