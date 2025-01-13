@@ -2,6 +2,8 @@ DESCRIPTION = "Packagegroup for inclusion in all Tegra demo images"
 
 LICENSE = "MIT"
 
+PACKAGE_ARCH = "${TUNE_PKGARCH}"
+
 inherit packagegroup
 
 RDEPENDS:${PN} = " \
@@ -9,4 +11,116 @@ RDEPENDS:${PN} = " \
     sshfs-fuse \
     strace \
     tegra-tools-tegrastats \
-"
+    tegra-libraries-camera \
+    tegra-libraries-core \
+    tegra-libraries-multimedia \
+    tegra-libraries-eglcore \
+    eglexternalplatform \
+    l4t-nvidia-glheaders \
+    tegra-mmapi-dev \
+    libatomic \
+    libffi \
+    xserver-xorg \
+    xauth \
+    opencv \
+    opencv-dev \
+    libvdpau \
+    libva \
+    man-db \
+    man \
+    libegl \
+    libcap \
+    libcap-bin \
+    mesa \
+    mesa-dev \
+    libopencv-core-dev \
+    libopencv-imgproc-dev \
+    libopencv-highgui-dev \
+    libopencv-videoio-dev \
+    libopencv-imgcodecs-dev \
+    gstreamer1.0-plugins-tegra-dev \
+    gstreamer1.0-plugins-good-dev \
+    gstreamer1.0-plugins-base-dev \
+    gstreamer1.0-plugins-nvdrmvideosink-dev \
+    gstreamer1.0-plugins-nveglgles-dev \
+    gstreamer1.0-plugins-nvjpeg-dev \
+    gstreamer1.0-plugins-nvv4l2camerasrc-dev \
+    gstreamer1.0-plugins-nvvidconv-dev \
+    gstreamer1.0-plugins-nvvideo4linux2-dev \
+    gstreamer1.0-rtsp-server-dev \
+    gstreamer1.0-plugins-nveglgles \
+    rsync \
+    vim \
+    strace \
+    media-ctl \
+    gstreamer1.0-plugins-bad-dev \
+    alsa-lib-dev \
+    can-utils \
+    bash-completion \
+    linux-firmware-rtl8168 \
+    e2fsprogs-tune2fs \
+    e2fsprogs-resize2fs \
+    v4l-utils \
+    trace-cmd \
+    sysstat \
+    gdb \
+    cuda-cudart-dev \
+    cuda-target-environment \
+    cuda-nvcc \
+    cuda-nvcc-headers \
+    tegra-tools-jetson-clocks \
+    sudo \
+    sed \
+    python3 \
+    git \
+    cpufrequtils \
+    openssh \
+    rsync \
+    vim \
+    libnice-dev \
+    feh \
+    usbutils \
+    trace-cmd \
+    clinfo \
+    jq \
+    strace \
+    sysstat \
+    can-utils \
+    net-tools \
+    parted \
+    file \
+    gdb \
+    smartmontools \
+    nvme-cli \
+    psmisc \
+    chrony \
+    lmsensors \
+    xfsprogs \
+    bridge-utils \
+    glibc-utils \
+    localedef \
+    libxkbfile \
+    autossh \
+    gtk+3 \
+    libsrtp \
+    libglvnd \
+    libglvnd-dev \
+    glib-2.0-dev \
+    libxcb-dev \
+    libxcb-glx \
+    zlib \
+    wayland \
+    egl-wayland \
+    egl-wayland-dev \
+    wayland-protocols \
+    wayland-dev \
+    systemd \
+    wget \
+    gnupg \
+    gcc \
+    libstdc++ \
+    libgcc \
+    cuda-toolkit \
+    users-pi \
+    aos-configuration \
+ "

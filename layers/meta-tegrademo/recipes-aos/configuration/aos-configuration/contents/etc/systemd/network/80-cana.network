@@ -1,0 +1,10 @@
+[Match]
+Name=cana
+
+[CAN]
+BitRate=1M
+RestartSec=1000ms
+BusErrorReporting=yes
+
+[Link]
+RequiredForOnline=no

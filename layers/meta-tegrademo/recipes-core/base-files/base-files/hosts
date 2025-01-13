@@ -1,0 +1,15 @@
+127.0.0.1       localhost
+
+# The following lines are desirable for IPv6 capable hosts
+::1     localhost ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+
+127.0.1.1 jetson-orin-nano-som
+
+10.67.67.101    orin-6767-1 orin1
+10.67.67.102    orin-6767-2 orin2
+10.67.67.103    orin-6767-3 orin3 imu
+10.67.67.2      roborio

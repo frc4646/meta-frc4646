@@ -19,7 +19,7 @@ REQUIRED_TD_BBLAYERS_CONF_VERSION = "${DISTRO}-5"
 
 LOCALCONF_VERSION = "2"
 
-TD_DEFAULT_DISTRO_FEATURES = "largefile opengl ptest multiarch wayland vulkan systemd pam virtualization usrmerge"
+TD_DEFAULT_DISTRO_FEATURES = "largefile opengl ptest multiarch wayland systemd pam virtualization usrmerge"
 
 DISTRO_FEATURES ?= "${DISTRO_FEATURES_DEFAULT} ${TD_DEFAULT_DISTRO_FEATURES}"
 
@@ -33,12 +33,10 @@ SDKPATHINSTALL = "/opt/${DISTRO}/${SDK_VERSION}"
 
 TCLIBCAPPEND = ""
 
-PACKAGE_CLASSES ?= "package_rpm"
+PACKAGE_CLASSES ?= "package_deb"
 
 SANITY_TESTED_DISTROS ?= " \
-            ubuntu-20.04 \n \
-            ubuntu-22.04 \n \
-            ubuntu-24.04 \n \
+            debian-12 \n \
             "
 
 # Most NVIDIA-supplied services expect systemd
@@ -51,4 +49,6 @@ INHERIT += "uninative"
 
 LICENSE_FLAGS_ACCEPTED += "commercial_faad2 commercial_x264"
 
-USE_REDUNDANT_FLASH_LAYOUT_DEFAULT ?= "1"
+PREFERRED_PROVIDER_virtual/sshd ?= "openssh"
+
+USE_REDUNDANT_FLASH_LAYOUT_DEFAULT ?= "0"
