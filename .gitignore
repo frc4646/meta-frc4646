@@ -1,4 +1,7 @@
-build*/
+build/bitbake*
+build/cache
+build/hashserve*
+build/tmp
 *~
 *.pyc
 *.pyo
