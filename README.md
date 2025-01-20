@@ -28,6 +28,15 @@ Note: this hasn't been tested yet with a fresh checkout, not everything might be
 
 To flash, extract the image, then run `sudo ./initrd-flash` with the orin in bootloader mode, connected over USB.
 
+To build for a devkit instead of a seed J401, run:
+```
+export MACHINE=jetson-orin-nano-devkit-nvme
+. repos/poky/oe-init-build-env build
+bitbake demo-image-base && ../to_xfs.py tmp/deploy/images/jetson-orin-nano-devkit-nvme/demo-image-base-jetson-orin-nano-devkit-nvme.rootfs.tegraflash.tar.gz demo-image-base-jetson-orin-nano-devkit-nvme.rootfs.tegraflash.tar.zst
+```
+
+And flash the same way, with ./initrd-flash
+
 
 To view the serial console:
 ```
