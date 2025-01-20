@@ -36,6 +36,7 @@ def scoped_mount(image):
         yield partition
     finally:
         subprocess.run(["sudo", "umount", partition], check=True)
+        os.rmdir(partition)
 
 def make_image(image):
     """Makes an image and creates an xfs filesystem on it."""
