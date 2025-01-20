@@ -106,6 +106,10 @@ if __name__ == '__main__':
                 ],
                                check=True)
 
+        # Make sure the image is flushed to disk so it doesn't change while tar
+        # is reading it.
+        subprocess.run(['sync'])
+
         print(f'Compressing results')
         subprocess.run([
             "tar",
