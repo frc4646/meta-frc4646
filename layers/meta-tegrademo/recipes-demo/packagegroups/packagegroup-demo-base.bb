@@ -123,5 +123,7 @@ RDEPENDS:${PN} = " \
     cuda-toolkit \
     users-pi \
     aos-configuration \
+    chronyc \
     kernel-module-uvcvideo \
  "
+# clang
