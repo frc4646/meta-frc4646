@@ -123,4 +123,5 @@ RDEPENDS:${PN} = " \
     cuda-toolkit \
     users-pi \
     aos-configuration \
+    kernel-module-uvcvideo \
  "
