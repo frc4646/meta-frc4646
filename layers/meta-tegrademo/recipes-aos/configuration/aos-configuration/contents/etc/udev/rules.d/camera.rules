@@ -1,0 +1,4 @@
+SUBSYSTEM=="video4linux", ACTION=="add", KERNEL=="video*", ENV{ID_PATH_TAG}=="platform-3610000_usb-usb-0_2_1_1_0", ENV{ID_V4L_CAPABILITIES}==":capture:", SYMLINK+="videoa"
+SUBSYSTEM=="video4linux", ACTION=="add", KERNEL=="video*", ENV{ID_PATH_TAG}=="platform-3610000_usb-usb-0_2_2_1_0", ENV{ID_V4L_CAPABILITIES}==":capture:", SYMLINK+="videob"
+SUBSYSTEM=="video4linux", ACTION=="add", KERNEL=="video*", ENV{ID_PATH_TAG}=="platform-3610000_usb-usb-0_2_3_1_0", ENV{ID_V4L_CAPABILITIES}==":capture:", SYMLINK+="videoc"
+SUBSYSTEM=="video4linux", ACTION=="add", KERNEL=="video*", ENV{ID_PATH_TAG}=="platform-3610000_usb-usb-0_2_4_1_0", ENV{ID_V4L_CAPABILITIES}==":capture:", SYMLINK+="videod"
