@@ -125,5 +125,7 @@ RDEPENDS:${PN} = " \
     aos-configuration \
     chronyc \
     kernel-module-uvcvideo \
+    kernel-module-usbmon \
+    tshark \
  "
 # clang

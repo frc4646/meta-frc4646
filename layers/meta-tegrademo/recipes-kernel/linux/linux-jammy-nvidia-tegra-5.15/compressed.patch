@@ -1,0 +1,19 @@
+diff --git a/drivers/media/usb/uvc/uvc_video.c b/drivers/media/usb/uvc/uvc_video.c
+index f477cfbbb905..6a96ff335403 100644
+--- a/drivers/media/usb/uvc/uvc_video.c
++++ b/drivers/media/usb/uvc/uvc_video.c
+@@ -230,6 +230,14 @@ static void uvc_fixup_video_ctrl(struct uvc_streaming *stream,
+ 		bandwidth = max_t(u32, bandwidth, 1024);
+ 
+ 		ctrl->dwMaxPayloadTransferSize = bandwidth;
++	} else if ((format->flags & UVC_FMT_FLAG_COMPRESSED) &&
++	           stream->dev->quirks & UVC_QUIRK_FIX_BANDWIDTH &&
++		   stream->intf->num_altsetting > 1) {
++          uint32_t prior = ctrl->dwMaxPayloadTransferSize;
++          ctrl->dwMaxPayloadTransferSize /= 8;
++	  uvc_dbg(stream->dev, VIDEO,
++		  "Reducing compressed bandwidth from %u B/frame to %u B/frame\n",
++		  prior, ctrl->dwMaxPayloadTransferSize);
+ 	}
+ }
+ 

@@ -42,3 +42,26 @@ To view the serial console:
 ```
 python3 /usr/lib/python3/dist-packages/serial/tools/miniterm.py /dev/ttyUSB0 115200
 ```
+
+# UVC camera debugging
+
+To turn on all debugging in dmesg:
+
+```
+echo 0xffff | sudo tee /sys/module/uvcvideo/parameters/trace
+```
+
+Set it back to 0 to turn it off.
+
+```
+echo 0 | sudo tee /sys/module/uvcvideo/parameters/trace
+```
+
+To turn quirks on to fix bandwidth calcs:
+
+```
+rmmod uvcvideo
+modprobe uvcvideo quirks=128
+```
+
+`dmesg` will spit out frame statistics, including bandwidth usage.

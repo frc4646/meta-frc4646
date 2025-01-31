@@ -12,3 +12,7 @@ SRC_URI += "file://config_xfs.cfg"
 #SRC_URI += "file://config_global_shutter_camera.cfg"
 SRC_URI += "file://config_sctp.cfg"
 SRC_URI += "file://uvc.cfg"
+
+SRC_URI:append:tegra = " \
+    file://compressed.patch \
+"
