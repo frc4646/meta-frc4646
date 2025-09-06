@@ -19,9 +19,9 @@ The upstream project has been modified to support AOS on the Jetson Nano 8GB SOM
 studio J401.  To build, run:
 
 ```
-export MACHINE=jetson-orin-nano-som
+export MACHINE=p3768-0000-p3767-0003
 . repos/poky/oe-init-build-env build
-bitbake demo-image-base && ../to_xfs.py tmp/deploy/images/jetson-orin-nano-som/demo-image-base-jetson-orin-nano-som.rootfs.tegraflash.tar.gz demo-image-base-jetson-orin-nano-som.rootfs.tegraflash.tar.zst
+bitbake demo-image-base && ../to_xfs.py tmp/deploy/images/p3768-0000-p3767-0003/demo-image-base-p3768-0000-p3767-0003.rootfs.tegraflash.tar.gz demo-image-base-p3768-0000-p3767-0003.rootfs.tegraflash.tar.zst
 ```
 
 Note: this hasn't been tested yet with a fresh checkout, not everything might be captured yet.

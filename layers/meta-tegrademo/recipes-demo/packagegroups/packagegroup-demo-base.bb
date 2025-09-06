@@ -31,6 +31,10 @@ RDEPENDS:${PN} = " \
     libegl \
     libcap \
     libcap-bin \
+    tensorrt-core \
+    tensorrt-core-dev \
+    tensorrt-plugins-prebuilt \
+    tensorrt-trtexec \
     mesa \
     mesa-dev \
     libopencv-core-dev \
@@ -102,7 +106,6 @@ RDEPENDS:${PN} = " \
     libxkbfile \
     autossh \
     gtk+3 \
-    libsrtp \
     libglvnd \
     libglvnd-dev \
     glib-2.0-dev \
@@ -127,5 +130,8 @@ RDEPENDS:${PN} = " \
     kernel-module-uvcvideo \
     kernel-module-usbmon \
     tshark \
+    tegra-bootfiles-dev \
  "
 # clang
+#    gcc
+#    g++

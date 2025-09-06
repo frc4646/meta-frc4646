@@ -12,6 +12,7 @@ without confirmation from nvbootctrl.
 
 Signed-off-by: Ricardo Salveti <ricardo@foundries.io>
 Signed-off-by: Jose Quaresma <jose.quaresma@foundries.io>
+Upstream-Status: Inappropriate
 ---
  Silicon/NVIDIA/Application/L4TLauncher/L4TLauncher.c | 8 ++++----
  1 file changed, 4 insertions(+), 4 deletions(-)

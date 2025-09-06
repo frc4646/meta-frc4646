@@ -1,0 +1,15 @@
+Upstream-Status: Inappropriate [cross compilation]
+
+Index: openssh-9.9p1/Makefile.in
+===================================================================
+--- openssh-9.9p1.orig/Makefile.in
++++ openssh-9.9p1/Makefile.in
+@@ -388,7 +388,7 @@ distprep: catman-do depend-check
+ 	$(AUTORECONF)
+ 	-rm -rf autom4te.cache .depend.bak
+ 
+-install: $(CONFIGFILES) $(MANPAGES) $(TARGETS) install-files install-sysconf host-key check-config
++install: $(CONFIGFILES) $(MANPAGES) $(TARGETS) install-files install-sysconf host-key
+ install-nokeys: $(CONFIGFILES) $(MANPAGES) $(TARGETS) install-files install-sysconf
+ install-nosysconf: $(CONFIGFILES) $(MANPAGES) $(TARGETS) install-files
+ 

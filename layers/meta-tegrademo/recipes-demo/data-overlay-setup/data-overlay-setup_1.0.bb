@@ -9,7 +9,8 @@ SRC_URI = "\
     file://data-overlay-setup.service.in \
 "
 
-S = "${WORKDIR}"
+S = "${WORKDIR}/sources"
+UNPACKDIR = "${S}"
 B = "${WORKDIR}/build"
 
 inherit systemd
