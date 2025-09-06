@@ -3,15 +3,14 @@ WantedBy=multi-user.target
 
 [Unit]
 Description=Service to pin the device to max clock rate
-Requires=nvfancontrol.service
-After=nvfancontrol.service
+Requires=nvpmodel.service nvfancontrol.service
+After=nvpmodel.service nvfancontrol.service
 
 [Service]
 Type=oneshot
 
-# Turn the GPU on
-ExecStart=bash -c 'echo 1 > /dev/nvgpu/igpu0/power'
 # Set all the clocks to max frequency
+# TODO(austin): is nvpmodel doing that for us?
 ExecStart=/usr/bin/jetson_clocks
 
 # Pin the camera clocks to max too to make things simpler.

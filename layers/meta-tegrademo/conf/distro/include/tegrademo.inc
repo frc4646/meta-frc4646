@@ -1,6 +1,6 @@
 DISTRO = "tegrademo"
 DISTRO_NAME = "OE4Tegra Demonstration Distro"
-DISTRO_VERSION_BASE = "5.0.6"
+DISTRO_VERSION_BASE = "5.2"
 DISTRO_VERSION = "${DISTRO_VERSION_BASE}+snapshot-${METADATA_REVISION}"
 DISTRO_CODENAME = "master"
 SDK_VENDOR = "-tdsdk"
@@ -19,7 +19,7 @@ REQUIRED_TD_BBLAYERS_CONF_VERSION = "${DISTRO}-5"
 
 LOCALCONF_VERSION = "2"
 
-TD_DEFAULT_DISTRO_FEATURES = "largefile opengl ptest multiarch wayland systemd pam virtualization usrmerge"
+TD_DEFAULT_DISTRO_FEATURES = "largefile opengl multiarch wayland systemd pam virtualization usrmerge"
 
 DISTRO_FEATURES ?= "${DISTRO_FEATURES_DEFAULT} ${TD_DEFAULT_DISTRO_FEATURES}"
 
@@ -30,8 +30,6 @@ PREFERRED_VERSION_linux-yocto-rt ?= "5.19%"
 
 SDK_NAME = "${DISTRO}-${TCLIBC}-${SDKMACHINE}-${IMAGE_BASENAME}-${TUNE_PKGARCH}-${MACHINE}"
 SDKPATHINSTALL = "/opt/${DISTRO}/${SDK_VERSION}"
-
-TCLIBCAPPEND = ""
 
 PACKAGE_CLASSES ?= "package_deb"
 
@@ -45,10 +43,9 @@ INIT_MANAGER = "systemd"
 require conf/distro/include/no-static-libs.inc
 require conf/distro/include/yocto-uninative.inc
 require conf/distro/include/security_flags.inc
+require conf/distro/include/yocto-space-optimize.inc
 INHERIT += "uninative"
 
 LICENSE_FLAGS_ACCEPTED += "commercial_faad2 commercial_x264"
-
-PREFERRED_PROVIDER_virtual/sshd ?= "openssh"
 
 USE_REDUNDANT_FLASH_LAYOUT_DEFAULT ?= "0"

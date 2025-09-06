@@ -1,19 +1,46 @@
+From a401b623aa41198661045c9de84906faf1806b84 Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Sat, 1 Feb 2025 01:11:51 -0800
+Subject: [PATCH] Hard code USB bandwidth to be 1/8 of reported on compressed
+ video
+
+This fixes out of bandwidth problems without needing to fix the device.
+
+Upstream-Status: Inappropriate [device hack]
+Signed-off-by: Austin Schuh <austin.linux@gmail.com>
+---
+ drivers/media/usb/uvc/uvc_video.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
 diff --git a/drivers/media/usb/uvc/uvc_video.c b/drivers/media/usb/uvc/uvc_video.c
-index f477cfbbb905..6a96ff335403 100644
+index f477cfbbb905..9ade4acc6754 100644
 --- a/drivers/media/usb/uvc/uvc_video.c
 +++ b/drivers/media/usb/uvc/uvc_video.c
-@@ -230,6 +230,14 @@ static void uvc_fixup_video_ctrl(struct uvc_streaming *stream,
+@@ -24,6 +24,9 @@
+ 
+ #include "uvcvideo.h"
+ 
++static int bandwidth_quirk_divisor = 1;
++module_param(bandwidth_quirk_divisor, int, 0660);
++
+ /* ------------------------------------------------------------------------
+  * UVC Controls
+  */
+@@ -230,6 +233,14 @@ static void uvc_fixup_video_ctrl(struct uvc_streaming *stream,
  		bandwidth = max_t(u32, bandwidth, 1024);
  
  		ctrl->dwMaxPayloadTransferSize = bandwidth;
 +	} else if ((format->flags & UVC_FMT_FLAG_COMPRESSED) &&
 +	           stream->dev->quirks & UVC_QUIRK_FIX_BANDWIDTH &&
-+		   stream->intf->num_altsetting > 1) {
-+          uint32_t prior = ctrl->dwMaxPayloadTransferSize;
-+          ctrl->dwMaxPayloadTransferSize /= 8;
-+	  uvc_dbg(stream->dev, VIDEO,
-+		  "Reducing compressed bandwidth from %u B/frame to %u B/frame\n",
-+		  prior, ctrl->dwMaxPayloadTransferSize);
++	           stream->intf->num_altsetting > 1) {
++		uint32_t prior = ctrl->dwMaxPayloadTransferSize;
++		ctrl->dwMaxPayloadTransferSize /= bandwidth_quirk_divisor;
++		uvc_dbg(stream->dev, VIDEO,
++		        "Reducing compressed bandwidth from %u B/frame to %u B/frame\n",
++		        prior, ctrl->dwMaxPayloadTransferSize);
  	}
  }
  
+-- 
+2.39.5
+
