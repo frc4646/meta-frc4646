@@ -25,8 +25,8 @@ DISTRO_FEATURES ?= "${DISTRO_FEATURES_DEFAULT} ${TD_DEFAULT_DISTRO_FEATURES}"
 
 # Jetson platforms do not use linux-yocto, but for QEMU testing
 # align with the poky distro.
-PREFERRED_VERSION_linux-yocto ?= "5.19%"
-PREFERRED_VERSION_linux-yocto-rt ?= "5.19%"
+#TEGRA_DEFAULT_KERNEL ?= "linux-yocto"
+#PREFERRED_PROVIDER_virtual/kernel:tegra = "${TEGRA_DEFAULT_KERNEL}"
 
 SDK_NAME = "${DISTRO}-${TCLIBC}-${SDKMACHINE}-${IMAGE_BASENAME}-${TUNE_PKGARCH}-${MACHINE}"
 SDKPATHINSTALL = "/opt/${DISTRO}/${SDK_VERSION}"
