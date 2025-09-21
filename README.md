@@ -13,6 +13,12 @@ Metadata layers are brought in as git submodules:
 | meta-openembedded     | scarthgap      | OpenEmbedded layers                                 |
 | meta-virtualization   | scarthgap      | Virtualization layer for docker support             |
 
+The command to checkout all the submodules:
+```
+git submodule update --init --recursive
+```
+
+
 ## Usage
 
 The upstream project has been modified to support AOS on the Jetson Nano 8GB SOM on a Seeed
