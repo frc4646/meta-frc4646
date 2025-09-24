@@ -2,8 +2,8 @@
 Name=eth0
 
 [Network]
-Address=10.46.46.101/24
-Gateway=10.46.46.13
+Address=10.18.68.101/24
+Gateway=10.18.68.13
 DNS=8.8.8.8
 
 # ipv6 adds an extra 10 seconds to boot, and we don't use it...
