@@ -13,7 +13,7 @@ S = "${UNPACKDIR}"
 inherit systemd
 
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
-SYSTEMD_SERVICE:${PN} = "grow-rootfs.service jetson-clocks.service aos.service aos-chrt.service hwclock.service"
+SYSTEMD_SERVICE:${PN} = "grow-rootfs.service jetson-clocks.service aos.service aos-chrt.service"
 
 ROOT = "${D}${base_prefix}"
 
@@ -45,8 +45,11 @@ do_install() {
     install_content 0644 "etc/systemd/system/aos-chrt.service" "root:root"
     install_content 0644 "etc/systemd/system/jetson-clocks.service" "root:root"
 
-    # Setup hwclock
-    install_content 0644 "etc/systemd/system/hwclock.service" "root:root"
+    # There is no hwclock.service: the kernel sets the clock from the RTC at
+    # boot (CONFIG_RTC_HCTOSYS), and writes it back every 11 minutes while
+    # chrony keeps it synchronized (CONFIG_RTC_SYSTOHC and chrony's rtcsync).
+    # Running hwclock --hctosys as well set the clock back to the RTC's whole
+    # second at every boot.
 }
 
 RDEPENDS:${PN} += " git"
@@ -69,4 +72,3 @@ FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/grow-rootfs.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/aos.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/aos-chrt.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/jetson-clocks.service"
-FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/hwclock.service"
