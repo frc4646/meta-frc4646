@@ -7,4 +7,5 @@ SRC_URI:append:tegra = " \
     file://config_rt_sched.cfg \
     file://config_preempt_rt.cfg \
     file://compressed.patch \
+    file://0001-io_uring-wake-real-time-waiters-from-hard-interrupt-.patch \
 "
