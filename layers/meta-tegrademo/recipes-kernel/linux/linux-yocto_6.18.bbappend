@@ -5,6 +5,7 @@ SRC_URI:append:tegra = " \
     file://config_sctp.cfg \
     file://uvc.cfg \
     file://config_rt_sched.cfg \
+    file://config_no_yaffs.cfg \
     file://compressed.patch \
     file://0001-io_uring-wake-real-time-waiters-from-hard-interrupt-.patch \
 "

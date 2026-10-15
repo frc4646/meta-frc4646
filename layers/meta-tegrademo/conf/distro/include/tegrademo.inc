@@ -49,3 +49,11 @@ INIT_MANAGER = "systemd"
 LICENSE_FLAGS_ACCEPTED += "commercial_faad2 commercial_x264"
 
 USE_REDUNDANT_FLASH_LAYOUT_DEFAULT ?= "0"
+
+# Build the root filesystem as xfs directly (see image_types_xfs.bbclass)
+# and put that in the tegraflash package.
+IMAGE_CLASSES += "image_types_xfs"
+IMAGE_TEGRAFLASH_FS_TYPE:tegra = "xfs"
+# The smallest APP partition the flash makes; it then fills the disk.  It has
+# to hold the 64G XFS_IMAGE_SIZE.
+ROOTFSPART_SIZE = "68719476736"
