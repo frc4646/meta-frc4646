@@ -91,6 +91,7 @@ RDEPENDS:${PN} = " \
     sysstat \
     can-utils \
     net-tools \
+    ethtool \
     parted \
     file \
     gdb \
