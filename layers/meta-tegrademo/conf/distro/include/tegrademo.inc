@@ -57,3 +57,8 @@ IMAGE_TEGRAFLASH_FS_TYPE:tegra = "xfs"
 # The smallest APP partition the flash makes; it then fills the disk.  It has
 # to hold the 64G XFS_IMAGE_SIZE.
 ROOTFSPART_SIZE = "68719476736"
+
+# No NFS, Bluetooth, mobile data or NFC on the robot.  This drops
+# packagegroup-base's rpcbind, bluez, ofono and neard.  The kernel has no NFS
+# or Bluetooth either (config_trim.cfg).
+DISTRO_FEATURES:remove = "nfs bluetooth 3g nfc"
