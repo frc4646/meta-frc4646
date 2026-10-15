@@ -24,10 +24,14 @@ DISTRO_FEATURES ?= "${TD_DEFAULT_DISTRO_FEATURES}"
 
 DISTRO_FEATURES_OPTED_OUT += "ptest vulkan"
 
-# Jetson platforms do not use linux-yocto, but for QEMU testing
-# align with the poky distro.
-#TEGRA_DEFAULT_KERNEL ?= "linux-yocto"
-#PREFERRED_PROVIDER_virtual/kernel:tegra = "${TEGRA_DEFAULT_KERNEL}"
+# As of L4T R39, Jetson Orin platforms can use linux-yocto (6.18) instead of
+# linux-noble-nvidia-tegra (6.8). Set TEGRA_DEFAULT_KERNEL to
+# "linux-yocto" for the non-RT 6.18 kernel, or "linux-noble-nvidia-tegra" to
+# go back to the NVIDIA kernel.
+TEGRA_DEFAULT_KERNEL ?= "linux-yocto-rt"
+PREFERRED_PROVIDER_virtual/kernel:tegra = "${TEGRA_DEFAULT_KERNEL}"
+PREFERRED_VERSION_linux-yocto ?= "6.18%"
+PREFERRED_VERSION_linux-yocto-rt ?= "6.18%"
 
 SDK_NAME = "${DISTRO}-${TCLIBC}-${SDKMACHINE}-${IMAGE_BASENAME}-${TUNE_PKGARCH}-${MACHINE}"
 SDKPATHINSTALL = "/opt/${DISTRO}/${SDK_VERSION}"
