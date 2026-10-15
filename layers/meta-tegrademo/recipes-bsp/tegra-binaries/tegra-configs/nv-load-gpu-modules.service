@@ -1,0 +1,20 @@
+[Unit]
+Description=Load the GPU driver
+DefaultDependencies=no
+After=systemd-modules-load.service
+Before=sysinit.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Written by NVIDIA's nv-load-display-modules too, for anything which checks
+# which GPU driver is in use.
+ExecStart=/bin/sh -c 'echo nvgpu-l4t > /run/nvidia-gpu-driver-active'
+# CUDA and TensorRT only need these.  The display drivers (nvidia,
+# nvidia-modeset, nvidia_drm) aren't loaded: the robot never has a display,
+# and the display controller is disabled in the device tree.
+ExecStart=/sbin/modprobe -a nvmap nvgpu
+
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,3 @@
+# A feature, rather than a patch in SRC_URI, so that it is applied after
+# meta-tegra's bpmp patches (features/tegra/...), which it depends on.
+patch 0002-firmware-tegra-bpmp-populate-debugfs-in-the-background.patch
