@@ -33,6 +33,12 @@ PREFERRED_PROVIDER_virtual/kernel:tegra = "${TEGRA_DEFAULT_KERNEL}"
 PREFERRED_VERSION_linux-yocto ?= "6.18%"
 PREFERRED_VERSION_linux-yocto-rt ?= "6.18%"
 
+# Both have two providers; name the ones the image has always had, so a new
+# layer can't change which one it gets.  mDNS (<hostname>.local) is avahi,
+# from the zeroconf distro feature.
+PREFERRED_RPROVIDER_ssh = "openssh"
+PREFERRED_RPROVIDER_libnss-mdns = "avahi-libnss-mdns"
+
 SDK_NAME = "${DISTRO}-${TCLIBC}-${SDKMACHINE}-${IMAGE_BASENAME}-${TUNE_PKGARCH}-${MACHINE}"
 SDKPATHINSTALL = "/opt/${DISTRO}/${SDK_VERSION}"
 
