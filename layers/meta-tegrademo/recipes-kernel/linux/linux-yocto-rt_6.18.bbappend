@@ -21,3 +21,12 @@ KERNEL_FEATURES:append:tegra = " config_trim.cfg config_boot_drivers.cfg config_
 # Our own kernel-meta: features listed here are applied after meta-tegra's.
 SRC_URI:append:tegra = " file://frc-kmeta;type=kmeta;destsuffix=frc-kmeta"
 KERNEL_FEATURES:append:tegra = " features/frc/bpmp-debugfs-async.scc"
+
+# Stay on 6.18.39, the kernel the real-time measurements were made on.  The
+# io_uring patches are written against it, and some of the 6.18.52 that
+# oe-core 6.0.4 moved to doesn't take them.  meta-tegra's patch queue goes
+# back with it: the newer one is refreshed against 6.18.44.
+LINUX_VERSION = "6.18.39"
+SRCREV_machine = "56572c42354027a50e261f16fe13b057604873e7"
+SRCREV_meta = "2f71b0a288c307062fc60948ac793d8d51c685e2"
+SRCREV_tegrameta = "a78c980f4c0f9aec1ccc9a176fcdd5516be2faa5"
