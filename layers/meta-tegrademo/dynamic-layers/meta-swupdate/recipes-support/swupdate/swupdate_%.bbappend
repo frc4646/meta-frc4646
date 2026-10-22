@@ -15,4 +15,4 @@ do_install:append() {
 }
 
 RDEPENDS:${PN} += "swupdate-machine-config"
-FILES_${PN}:remove = "${sysconfdir}/swupdate.cfg"
+FILES:${PN}:remove = "${sysconfdir}/swupdate.cfg"
