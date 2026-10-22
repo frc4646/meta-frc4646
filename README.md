@@ -7,9 +7,9 @@ Metadata layers are brought in as git submodules:
 
 | Layer Repo            | Branch         | Description                                         |
 | --------------------- | ---------------|---------------------------------------------------- |
-| openembedded-core     | wrynose        | OE-Core                                             |
-| bitbake               | 2.18           | BitBake                                             |
-| meta-tegra            | wrynose        | Pinned L4T R39.2.0 / JetPack 7.2                     |
+| openembedded-core     | wrynose        | OE-Core, pinned to Yocto 6.0.4                      |
+| bitbake               | 2.18           | BitBake, pinned to Yocto 6.0.4                      |
+| meta-tegra            | wrynose        | Pinned L4T R39.2.1 / JetPack 7.2.1                 |
 | meta-tegra-community  | wrynose        | OE4T layer with additions from the community        |
 | meta-openembedded     | wrynose        | OpenEmbedded layers                                 |
 | meta-virtualization   | wrynose        | Virtualization layer                                |
