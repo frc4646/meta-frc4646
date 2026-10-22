@@ -109,12 +109,13 @@ SDKMACHINE ?= "x86_64"
 #  "eclipse-debug"  - add Eclipse remote debugging support
 #  "tools-profile"  - add profiling tools (oprofile, lttng, valgrind)
 #  "tools-testapps" - add useful testing tools (ts_print, aplay, arecord etc.)
-#  "debug-tweaks"   - make an image suitable for development
-#                     e.g. ssh root access has a blank password
+#  "package-management" - keep apt, dpkg and the package database in the image
+#  "allow-root-login"   - let root log in
+# Yocto 6.0 split "debug-tweaks" into allow-empty-password, allow-root-login,
+# empty-root-password and post-install-logging.
 # There are other application targets that can be used here too, see
 # meta/classes/image.bbclass and meta/classes/core-image.bbclass for more details.
-# We default to enabling the debugging tweaks.
-EXTRA_IMAGE_FEATURES ?= "debug-tweaks"
+EXTRA_IMAGE_FEATURES ?= "package-management allow-root-login"
 
 #
 # Additional image features
@@ -173,6 +174,11 @@ BB_DISKMON_DIRS ??= "\
     HALT,${DL_DIR},100M,1K \
     HALT,${SSTATE_DIR},100M,1K \
     HALT,/tmp,10M,1K"
+
+# Delete each recipe's work directory once it is built, which keeps TMPDIR to
+# tens of GB instead of hundreds.  Add a recipe to RM_WORK_EXCLUDE to keep its
+# sources and build tree around, for example while working on the kernel.
+INHERIT += "rm_work"
 
 #
 # Shared-state files from other locations
