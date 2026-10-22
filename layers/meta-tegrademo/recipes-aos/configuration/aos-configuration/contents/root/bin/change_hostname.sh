@@ -58,3 +58,8 @@ then
 else
   echo -e "${IP_BASE}.2\troborio" >> /etc/hosts
 fi
+
+# Publish orin-N.local and orin.local over mDNS too, alongside
+# ${HOSTNAME}.local.
+/bin/sed -i -e "s/^[0-9.]*\s*orin-[0-9]*\.local$/${IP}\torin-${ORIN_NUMBER}.local/" \
+  -e "s/^[0-9.]*\s*orin\.local$/${IP}\torin.local/" /etc/avahi/hosts

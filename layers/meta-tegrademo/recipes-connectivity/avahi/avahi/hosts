@@ -1,0 +1,9 @@
+# Names avahi publishes over mDNS besides <hostname>.local.  Each line is
+# an address and a name.  change_hostname.sh rewrites the addresses and the
+# orin-N line to match the hostname and eth0's address.
+#
+# avahi publishes each line on its own.  If another device already answers
+# for a name, avahi drops just that line, so with two Orins on a network
+# orin.local is whichever answered first.
+10.18.68.101    orin-1.local
+10.18.68.101    orin.local
