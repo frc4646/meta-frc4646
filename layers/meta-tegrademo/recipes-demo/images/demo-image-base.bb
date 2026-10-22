@@ -4,5 +4,5 @@ require demo-image-common.inc
 
 IMAGE_FEATURES += " ssh-server-openssh"
 
-ROOT_HOME="/root"
-FILESYSTEM_PERMS_TABLES="files/fs-perms.txt"
+ROOT_HOME = "/root"
+FILESYSTEM_PERMS_TABLES = "files/fs-perms.txt"

@@ -109,12 +109,11 @@ SDKMACHINE ?= "x86_64"
 #  "eclipse-debug"  - add Eclipse remote debugging support
 #  "tools-profile"  - add profiling tools (oprofile, lttng, valgrind)
 #  "tools-testapps" - add useful testing tools (ts_print, aplay, arecord etc.)
-#  "debug-tweaks"   - make an image suitable for development
-#                     e.g. ssh root access has a blank password
+# These three replace 'debug-tweaks', decomposed in Yocto 6.0.
 # There are other application targets that can be used here too, see
 # meta/classes/image.bbclass and meta/classes/core-image.bbclass for more details.
 # We default to enabling the debugging tweaks.
-EXTRA_IMAGE_FEATURES ?= "debug-tweaks"
+EXTRA_IMAGE_FEATURES ?= "allow-empty-password allow-root-login empty-root-password"
 
 #
 # Additional image features
@@ -174,10 +173,29 @@ BB_DISKMON_DIRS ??= "\
     HALT,${SSTATE_DIR},100M,1K \
     HALT,/tmp,10M,1K"
 
+# BTRFS root: tmp/work/ grows to ~150 GB of small files and saturates
+# metadata, forcing the FS read-only (errno -28 ENOSPC on metadata).
+INHERIT += "rm_work"
+
+# Shallow: full --mirror is multi-GB and frequently dies mid-clone over HTTP/2.
+# Scoped per-recipe: devtool upgrade and the archiver class need real history.
+BB_GIT_SHALLOW:pn-linux-noble-nvidia-tegra = "1"
+BB_GIT_SHALLOW_DEPTH:pn-linux-noble-nvidia-tegra = "1"
+BB_GIT_SHALLOW:pn-systemd = "1"
+BB_GIT_SHALLOW_DEPTH:pn-systemd = "1"
+BB_GIT_SHALLOW:pn-python3-pefile = "1"
+BB_GIT_SHALLOW_DEPTH:pn-python3-pefile = "1"
+
+
+# meta-tegra's -rt variant applies enable-preempt-rt.cfg.
+PREFERRED_PROVIDER_virtual/kernel = "linux-noble-nvidia-tegra-rt"
+
+# Both dropbear and openssh provide `ssh`; pin to openssh (already
+# RDEPENDed by packagegroup-demo-base) to silence the bitbake NOTE.
+PREFERRED_RPROVIDER_ssh = "openssh"
+
 #
-# Shared-state files from other locations
-#
-# As mentioned above, shared state files are prebuilt cache data objects which can be
+# As mentioned above, shared state files are prebuilt cache data objects which be
 # used to accelerate build time. This variable can be used to configure the system
 # to search other mirror locations for these objects before it builds the data itself.
 #

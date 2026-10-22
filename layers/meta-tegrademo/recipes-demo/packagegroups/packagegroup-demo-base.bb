@@ -101,7 +101,9 @@ RDEPENDS:${PN} = " \
     lmsensors \
     xfsprogs \
     bridge-utils \
+    glibc \
     glibc-utils \
+    ldd \
     localedef \
     libxkbfile \
     autossh \
@@ -128,7 +130,6 @@ RDEPENDS:${PN} = " \
     aos-configuration \
     chronyc \
     kernel-module-uvcvideo \
-    kernel-module-usbmon \
     tshark \
     tegra-bootfiles-dev \
  "

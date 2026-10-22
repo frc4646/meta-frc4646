@@ -57,7 +57,7 @@ def make_image(image):
 if __name__ == '__main__':
     if len(sys.argv) < 3:
         print("Usage:", file=sys.stderr)
-        print("  to_xfs ext3.rootfs.tegraflash.tar.gz xfs.rootfs.tegraflash.tar.zstd", file=sys.stderr)
+        print("  to_xfs ext3.rootfs.tegraflash-tar.gz xfs.rootfs.tegraflash-tar.zst", file=sys.stderr)
         sys.exit(1)
 
     EXT3 = sys.argv[1]

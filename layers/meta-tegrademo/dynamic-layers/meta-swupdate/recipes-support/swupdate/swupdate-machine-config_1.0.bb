@@ -15,7 +15,7 @@ SRC_URI:append:secureboot = " \
 SWUPDATE_BOARDNAME ??= "${MACHINE}"
 SWUPDATE_HWREVISION ??= "1.0"
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 B = "${WORKDIR}/build"
 
 do_compile() {

@@ -4,19 +4,18 @@ LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 PR = "r0"
 
-DOTFILES_REF="v0.1"
+DOTFILES_REF = "v0.1"
 
-SRCREV="fa97e077944d36e320201a2627cc6a75e4f1bceb"
+SRCREV = "fa97e077944d36e320201a2627cc6a75e4f1bceb"
 SRC_URI:append = " file://home/pi/.ssh/authorized_keys"
 SRC_URI:append = " file://etc/security/limits.d/rt.conf"
-SRC_URI:append = " git://github.com/AustinSchuh/.dotfiles.git;protocol=https;branch=main;name=dotfiles"
+SRC_URI:append = " git://github.com/AustinSchuh/.dotfiles.git;protocol=https;branch=main;name=dotfiles;destsuffix=git"
 
 do_install[network] = '1'
 
 PACKAGES =+ "${PN}-pi"
 
-S = "${WORKDIR}/sources"
-UNPACKDIR = "${S}"
+S = "${UNPACKDIR}"
 
 inherit useradd
 
@@ -44,7 +43,7 @@ do_install() {
 
     # Install dotfiles.
     mkdir -p ${D}${base_prefix}/home/pi/.dotfiles
-    rsync --recursive --verbose --exclude '.git' ${WORKDIR}/sources/git/ ${D}${base_prefix}/home/pi/
+    rsync --recursive --verbose --exclude '.git' ${UNPACKDIR}/git/ ${D}${base_prefix}/home/pi/
     chown -R pi:pi ${D}${base_prefix}/home/pi/
 
     # Now setup vundle for vim.
@@ -54,7 +53,7 @@ do_install() {
 
     # Do it for root too...
     mkdir -p ${D}${base_prefix}${ROOT_HOME}/.dotfiles
-    rsync --recursive --verbose --exclude '.git' ${WORKDIR}/sources/git/ ${D}${base_prefix}${ROOT_HOME}/
+    rsync --recursive --verbose --exclude '.git' ${UNPACKDIR}/git/ ${D}${base_prefix}${ROOT_HOME}/
     chown -R root:root ${D}${base_prefix}${ROOT_HOME}/
     echo "" | HOME=${D}${base_prefix}${ROOT_HOME}/ /usr/bin/vim -u ${D}${base_prefix}${ROOT_HOME}/.vimrc -c PluginInstall -c qall | tee /dev/null
     rm ${D}${base_prefix}${ROOT_HOME}/.viminfo

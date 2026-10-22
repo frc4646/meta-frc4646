@@ -1,7 +1,10 @@
-build/bitbake*
-build/cache
-build/hashserve*
-build/tmp
+# build-*/ covers alternate BUILDDIRs from `. setup-env <name>`.
+build/
+build-*/
+
+# to_xfs.py flashing artifacts.
+*.tegraflash.xfs.tar.zst
+*.tegraflash-tar.zst
 *~
 *.pyc
 *.pyo
