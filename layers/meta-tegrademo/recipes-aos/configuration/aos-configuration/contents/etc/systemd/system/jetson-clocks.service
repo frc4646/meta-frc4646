@@ -23,5 +23,13 @@ ExecStart=bash -c 'cat /sys/kernel/debug/bpmp/debug/clk/isp/max_rate | tee /sys/
 ExecStart=bash -c 'cat /sys/kernel/debug/bpmp/debug/clk/nvcsi/max_rate | tee /sys/kernel/debug/bpmp/debug/clk/nvcsi/rate'
 ExecStart=bash -c 'cat /sys/kernel/debug/bpmp/debug/clk/emc/max_rate | tee /sys/kernel/debug/bpmp/debug/clk/emc/rate'
 
+# Keep the GPU's graphics engine powered between frames.  With engine level
+# power gating on, it powers down between 60 Hz camera frames and every frame
+# pays ~0.4 ms to wake it, more than the AprilTag detector's GPU work.  Leaving
+# it powered costs ~0.15 W.  The clock gating stays on: turning it off too
+# costs ~2.3 W and buys nothing measurable.
+ExecStart=bash -c 'echo 0 > /sys/devices/platform/bus@0/17000000.gpu/aelpg_enable'
+ExecStart=bash -c 'echo 0 > /sys/devices/platform/bus@0/17000000.gpu/elpg_enable'
+
 TimeoutSec=0
 RemainAfterExit=yes
