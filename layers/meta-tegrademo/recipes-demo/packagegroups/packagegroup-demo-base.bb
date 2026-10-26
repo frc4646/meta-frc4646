@@ -101,7 +101,9 @@ RDEPENDS:${PN} = " \
     lmsensors \
     xfsprogs \
     bridge-utils \
+    glibc \
     glibc-utils \
+    ldd \
     localedef \
     libxkbfile \
     autossh \
