@@ -58,6 +58,12 @@ RDEPENDS:${PN} = " \
     strace \
     media-ctl \
     gstreamer1.0-plugins-bad-dev \
+    gstreamer1.0-plugins-bad-webrtc \
+    gstreamer1.0-plugins-bad-srtp \
+    gstreamer1.0-plugins-bad-sctp \
+    gstreamer1.0-plugins-bad-dtls \
+    gstreamer1.0-plugins-ugly-x264 \
+    libnice \
     alsa-lib-dev \
     can-utils \
     bash-completion \

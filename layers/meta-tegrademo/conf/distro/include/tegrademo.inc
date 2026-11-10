@@ -21,7 +21,7 @@ TARGET_VENDOR = "-oe4t"
 # Increment version number (and the corresponding
 # setting int the template bblayers.conf.sample file)
 # each time the layer settings are changed.
-REQUIRED_TD_BBLAYERS_CONF_VERSION = "${DISTRO}-7"
+REQUIRED_TD_BBLAYERS_CONF_VERSION = "${DISTRO}-8"
 
 LOCALCONF_VERSION = "2"
 
@@ -55,7 +55,7 @@ SANITY_TESTED_DISTROS ?= " \
 # Most NVIDIA-supplied services expect systemd
 INIT_MANAGER = "systemd"
 
-LICENSE_FLAGS_ACCEPTED += "commercial_faad2 commercial_x264"
+LICENSE_FLAGS_ACCEPTED += "commercial_faad2 commercial_x264 commercial_gstreamer1.0-plugins-ugly"
 
 USE_REDUNDANT_FLASH_LAYOUT_DEFAULT ?= "0"
 
