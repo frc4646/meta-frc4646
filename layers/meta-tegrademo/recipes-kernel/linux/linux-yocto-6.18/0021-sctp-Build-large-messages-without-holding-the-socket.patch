@@ -28,29 +28,17 @@ DRAFT: for testing.
 Upstream-Status: Pending
 Assisted-by: LLM
 ---
- net/sctp/socket.c | 89 ++++++++++++++++++++++++++++++++++++++++++++---
- 1 file changed, 85 insertions(+), 4 deletions(-)
+ net/sctp/socket.c | 77 ++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 73 insertions(+), 4 deletions(-)
 
 diff --git a/net/sctp/socket.c b/net/sctp/socket.c
-index 7aaffc6..c05dc19 100644
+index 01bb01a0d03b..be98f19290a1 100644
 --- a/net/sctp/socket.c
 +++ b/net/sctp/socket.c
-@@ -1785,10 +1785,82 @@ static int sctp_sendmsg_check_sflags(struct sctp_association *asoc,
- 	return 1;
+@@ -1797,10 +1797,70 @@ static int sctp_sendmsg_check_stream(struct sctp_association *asoc,
+ 	return 0;
  }
  
-+static int sctp_sendmsg_check_stream(struct sctp_association *asoc,
-+				     struct sctp_sndrcvinfo *sinfo)
-+{
-+	if (unlikely(sinfo->sinfo_stream >= asoc->stream.outcnt))
-+		return -EINVAL;
-+
-+	if (unlikely(!SCTP_SO(&asoc->stream, sinfo->sinfo_stream)->ext))
-+		return sctp_stream_init_ext(&asoc->stream, sinfo->sinfo_stream);
-+
-+	return 0;
-+}
-+
 +/* Messages this big are mostly allocating chunks and copying data, which holds
 + * up everything else on the socket, including sends of small messages on other
 + * streams.  Any smaller and it's not worth letting go of the lock.
@@ -119,7 +107,7 @@ index 7aaffc6..c05dc19 100644
  {
  	struct sock *sk = asoc->base.sk;
  	struct sctp_sock *sp = sctp_sk(sk);
-@@ -1854,7 +1926,16 @@ static int sctp_sendmsg_to_asoc(struct sctp_association *asoc,
+@@ -1863,7 +1923,16 @@ static int sctp_sendmsg_to_asoc(struct sctp_association *asoc,
  		pr_debug("%s: we associated primitively\n", __func__);
  	}
  
@@ -137,7 +125,7 @@ index 7aaffc6..c05dc19 100644
  	if (IS_ERR(datamsg)) {
  		err = PTR_ERR(datamsg);
  		goto err;
-@@ -1980,7 +2061,7 @@ static int sctp_sendmsg(struct sock *sk, struct msghdr *msg, size_t msg_len)
+@@ -1989,7 +2058,7 @@ static int sctp_sendmsg(struct sock *sk, struct msghdr *msg, size_t msg_len)
  			sctp_sendmsg_update_sinfo(asoc, sinfo, &cmsgs);
  
  			err = sctp_sendmsg_to_asoc(asoc, msg, msg_len,
@@ -146,7 +134,7 @@ index 7aaffc6..c05dc19 100644
  			if (err < 0)
  				goto out_unlock;
  
-@@ -2035,7 +2116,7 @@ static int sctp_sendmsg(struct sock *sk, struct msghdr *msg, size_t msg_len)
+@@ -2044,7 +2113,7 @@ static int sctp_sendmsg(struct sock *sk, struct msghdr *msg, size_t msg_len)
  	sctp_sendmsg_update_sinfo(asoc, sinfo, &cmsgs);
  
  	/* Send msg to the asoc */

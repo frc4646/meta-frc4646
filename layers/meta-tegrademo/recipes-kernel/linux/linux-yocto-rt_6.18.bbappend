@@ -12,7 +12,7 @@ SRC_URI:append:tegra = " \
     file://config_tracers.cfg \
     file://config_preempt_rt.cfg \
     file://compressed.patch \
-    file://0001-io_uring-wake-real-time-waiters-from-hard-interrupt-.patch \
+    file://0001-io_uring-wait-wake-real-time-waiters-from-hard-interrupt-context.patch \
     file://0002-io_uring-don-t-trust-an-earlier-task_work-add-to-wak.patch \
     file://0003-io_uring-bound-the-number-of-released-rings-waiting-.patch \
     file://0004-io_uring-futex-return-a-wait-s-data-to-the-cache-whe.patch \
@@ -46,11 +46,10 @@ KERNEL_FEATURES:append:tegra = " features/frc/bpmp-debugfs-async.scc features/fr
 # passing PAHOLE=false to make only when KERNEL_DEBUG is "True".
 KERNEL_DEBUG = "True"
 
-# Stay on 6.18.39, the kernel the real-time measurements were made on.  The
-# io_uring patches are written against it, and some of the 6.18.52 that
-# oe-core 6.0.4 moved to doesn't take them.  meta-tegra's patch queue goes
-# back with it: the newer one is refreshed against 6.18.44.
-LINUX_VERSION = "6.18.39"
-SRCREV_machine = "56572c42354027a50e261f16fe13b057604873e7"
-SRCREV_meta = "2f71b0a288c307062fc60948ac793d8d51c685e2"
-SRCREV_tegrameta = "a78c980f4c0f9aec1ccc9a176fcdd5516be2faa5"
+# Newer than the 6.18.52 oe-core 6.0.4 has: 6.18.59 is the newest
+# linux-yocto 6.18.  meta-tegra's patch queue moves with it, to the one
+# refreshed against 6.18.59.
+LINUX_VERSION = "6.18.59"
+SRCREV_machine = "582762f4ac66e79c16b088b3fbb5a67a57a15d88"
+SRCREV_meta = "cf1eb35154969907fb08e980fe6d1881c97d6a97"
+SRCREV_tegrameta = "1bf0077574169c8724f994a2088221212e88b24f"

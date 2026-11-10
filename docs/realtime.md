@@ -7,10 +7,8 @@ Disk I/O is not real-time.  Nothing real-time should wait on the disk.
 
 ## Kernel
 
-The kernel is mainline 6.18.39 with `PREEMPT_RT` (`linux-yocto-rt`).  It stays
-on 6.18.39, the kernel the real-time measurements were made on, until the
-patches below are rebased and the measurements are repeated
-(`linux-yocto-rt_6.18.bbappend`).
+The kernel is mainline 6.18.59 with `PREEMPT_RT` (`linux-yocto-rt`), the
+newest 6.18 linux-yocto has.  The measurements below were made on 6.18.39.
 
 `config_preempt_rt.cfg`:
 
@@ -34,7 +32,8 @@ Cortex-A78 isn't vulnerable to Meltdown.
 ### Patches
 
 In `layers/meta-tegrademo/recipes-kernel/linux/linux-yocto-6.18/`; each one's
-description has the details and measurements.  None are merged upstream.
+description has the details and measurements.  Only 0001 is merged
+upstream, in 6.18.60; drop it when the kernel gets there.
 
 | Patch | What it fixes |
 |---|---|
