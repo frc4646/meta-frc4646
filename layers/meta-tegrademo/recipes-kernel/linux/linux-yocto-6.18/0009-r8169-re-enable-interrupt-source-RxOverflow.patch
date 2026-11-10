@@ -1,0 +1,39 @@
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Thu, 30 Oct 2026 00:00:00 -0700
+Subject: [PATCH] r8169: re-enable interrupt source RxOverflow
+
+This reverts commit 6994520a3328 ("r8169: disable interrupt source
+RxOverflow") for the chips it changed.
+
+That commit reasoned that running out of RX descriptors always comes with
+NAPI already being scheduled.  On an RTL8168h (XID 541) behind a Tegra234
+DesignWare root port, receiving at line rate from a TSO sender, it doesn't:
+NAPI runs, finds no RX work, completes and unmasks, and the chip then
+latches RxOverflow (RxDescUnavail) | RxFIFOOver | TxDescUnavail with none
+of them in IntrMask.  No MSI ever comes, TX stops with NPQ still set in
+TxPoll, and the link is dead until the TX watchdog resets the chip 5 s
+later.  Captured three times with IntrMask 0x002f, IntrStatus 0x00d0.
+
+With RxOverflow in the mask the chip interrupts on it, the handler acks
+the latched status and schedules NAPI, and RX resumes.
+
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ drivers/net/ethernet/realtek/r8169_main.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/net/ethernet/realtek/r8169_main.c b/drivers/net/ethernet/realtek/r8169_main.c
+--- a/drivers/net/ethernet/realtek/r8169_main.c
++++ b/drivers/net/ethernet/realtek/r8169_main.c
+@@ -5108,6 +5108,8 @@ static void rtl_set_irq_mask(struct rtl8169_private *tp)
+
+ 	if (tp->mac_version <= RTL_GIGA_MAC_VER_06)
+ 		tp->irq_mask |= SYSErr | RxFIFOOver;
++	else
++		tp->irq_mask |= RxOverflow;
+ }
+
+ static int rtl_alloc_irq(struct rtl8169_private *tp)
+--
+2.47.0

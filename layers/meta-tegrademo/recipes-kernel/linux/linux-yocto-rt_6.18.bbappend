@@ -16,6 +16,7 @@ SRC_URI:append:tegra = " \
     file://0002-io_uring-don-t-trust-an-earlier-task_work-add-to-wak.patch \
     file://0003-io_uring-bound-the-number-of-released-rings-waiting-.patch \
     file://0004-io_uring-futex-return-a-wait-s-data-to-the-cache-whe.patch \
+    file://0009-r8169-re-enable-interrupt-source-RxOverflow.patch \
 "
 
 # Fragments in SRC_URI are merged before KERNEL_FEATURES, and the features
