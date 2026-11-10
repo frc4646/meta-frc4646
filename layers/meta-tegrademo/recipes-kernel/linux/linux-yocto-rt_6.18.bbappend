@@ -8,6 +8,8 @@ SRC_URI:append:tegra = " \
     file://config_no_yaffs.cfg \
     file://config_trim.cfg \
     file://config_boot_drivers.cfg \
+    file://config_btf.cfg \
+    file://config_tracers.cfg \
     file://config_preempt_rt.cfg \
     file://compressed.patch \
     file://0001-io_uring-wake-real-time-waiters-from-hard-interrupt-.patch \
@@ -16,11 +18,16 @@ SRC_URI:append:tegra = " \
 # Fragments in SRC_URI are merged before KERNEL_FEATURES, and the features
 # turn sound (cfg/tegra.cfg), Bluetooth (jetson-devkit.scc) and KVM back on.
 # Listing the fragments as features as well merges them again after those.
-KERNEL_FEATURES:append:tegra = " config_trim.cfg config_boot_drivers.cfg config_preempt_rt.cfg"
+KERNEL_FEATURES:append:tegra = " config_trim.cfg config_boot_drivers.cfg config_btf.cfg config_preempt_rt.cfg config_tracers.cfg"
 
 # Our own kernel-meta: features listed here are applied after meta-tegra's.
 SRC_URI:append:tegra = " file://frc-kmeta;type=kmeta;destsuffix=frc-kmeta"
 KERNEL_FEATURES:append:tegra = " features/frc/bpmp-debugfs-async.scc"
+
+# config_btf.cfg: CONFIG_DEBUG_INFO_BTF depends on CONFIG_PAHOLE_VERSION, which
+# Kconfig reads from pahole.  linux-yocto.inc makes pahole available and stops
+# passing PAHOLE=false to make only when KERNEL_DEBUG is "True".
+KERNEL_DEBUG = "True"
 
 # Stay on 6.18.39, the kernel the real-time measurements were made on.  The
 # io_uring patches are written against it, and some of the 6.18.52 that
