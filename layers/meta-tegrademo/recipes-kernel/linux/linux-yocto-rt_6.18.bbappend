@@ -18,6 +18,7 @@ SRC_URI:append:tegra = " \
     file://0004-io_uring-futex-return-a-wait-s-data-to-the-cache-whe.patch \
     file://0009-r8169-re-enable-interrupt-source-RxOverflow.patch \
     file://0010-net-run-the-NAPI-deferred-poll-timer-in-hard-IRQ-context.patch \
+    file://0011-net-sched-boost-a-preempted-qdisc-owner-on-PREEMPT_RT.patch \
 "
 
 # Fragments in SRC_URI are merged before KERNEL_FEATURES, and the features

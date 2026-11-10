@@ -1,0 +1,123 @@
+From 9500d6f0134930674e8903e4a867cb03993d0048 Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Fri, 30 Oct 2026 11:09:10 -0700
+Subject: [PATCH] net: sched: Boost a preempted qdisc owner on PREEMPT_RT
+
+Whoever wins qdisc_run_begin() dequeues and transmits for every other
+sender: the others only enqueue and return.  On PREEMPT_RT the owner can
+be preempted while it runs the qdisc, and then nothing is transmitted
+until it is scheduled again.  When the owner is a SCHED_OTHER task (a TCP
+receiver sending ACKs from recvmsg, say) and real-time tasks keep its CPU
+busy, packets from a high priority sender wait behind it for tens of
+milliseconds.  Nothing blocks on a lock, so priority inheritance never
+helps.
+
+Measured on a Jetson Orin (6.18.39-rt3, r8169, pfifo_fast) with FIFO 6
+load on every CPU and an iperf3 receiver: SCTP packets from a FIFO 20
+sender sat in the qdisc for up to 119 ms, and every one of them was
+finally transmitted by iperf3 from __qdisc_run().  A locked root qdisc
+(prio) was no better: __dev_xmit_skb() serializes contended enqueues on
+busylock on PREEMPT_RT, but drops it just before __qdisc_run(), which is
+where the owner gets preempted.
+
+Make running the qdisc hold a sleeping lock on PREEMPT_RT, so that a
+waiting sender boosts the owner:
+ - lockless qdiscs block on seqlock instead of trylocking it;
+ - __dev_xmit_skb() keeps busylock while it runs a locked qdisc, and
+   net_tx_action() takes it too.
+
+The owner then runs at most one dev_tx_weight quota at the waiter's
+priority before the waiter gets the qdisc.
+
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ include/net/sch_generic.h | 11 +++++++++++
+ net/core/dev.c            | 20 ++++++++++++++++----
+ 2 files changed, 27 insertions(+), 4 deletions(-)
+
+diff --git a/include/net/sch_generic.h b/include/net/sch_generic.h
+index 059eb6c..a186243 100644
+--- a/include/net/sch_generic.h
++++ b/include/net/sch_generic.h
+@@ -194,6 +194,17 @@ static inline bool qdisc_is_empty(const struct Qdisc *qdisc)
+ static inline bool qdisc_run_begin(struct Qdisc *qdisc)
+ {
+ 	if (qdisc->flags & TCQ_F_NOLOCK) {
++		/* On PREEMPT_RT the owner of seqlock can be preempted while it
++		 * runs the qdisc.  Everybody else only enqueues and leaves, so
++		 * nothing is transmitted until the owner runs again, however
++		 * important the waiting packets are.  Block on seqlock instead
++		 * so that priority inheritance boosts the owner.
++		 */
++		if (IS_ENABLED(CONFIG_PREEMPT_RT)) {
++			spin_lock(&qdisc->seqlock);
++			return true;
++		}
++
+ 		if (spin_trylock(&qdisc->seqlock))
+ 			return true;
+ 
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 5853aad..7a9e2e6 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -4210,7 +4210,9 @@ no_lock_out:
+ 	 * On PREEMPT_RT it is possible to preempt the qdisc owner during xmit
+ 	 * and then other tasks will only enqueue packets. The packets will be
+ 	 * sent after the qdisc owner is scheduled again. To prevent this
+-	 * scenario the task always serialize on the lock.
++	 * scenario the task always serialize on the lock, and the owner keeps
++	 * holding it while it runs the qdisc so that priority inheritance
++	 * boosts it.
+ 	 */
+ 	contended = qdisc_is_running(q) || IS_ENABLED(CONFIG_PREEMPT_RT);
+ 	if (unlikely(contended))
+@@ -4231,7 +4233,8 @@ no_lock_out:
+ 		qdisc_bstats_update(q, skb);
+ 
+ 		if (sch_direct_xmit(skb, q, dev, txq, root_lock, true)) {
+-			if (unlikely(contended)) {
++			if (!IS_ENABLED(CONFIG_PREEMPT_RT) &&
++			    unlikely(contended)) {
+ 				spin_unlock(&q->busylock);
+ 				contended = false;
+ 			}
+@@ -4245,7 +4248,8 @@ no_lock_out:
+ 		rc = dev_qdisc_enqueue(skb, q, &to_free, txq);
+ 		WRITE_ONCE(q->owner, -1);
+ 		if (qdisc_run_begin(q)) {
+-			if (unlikely(contended)) {
++			if (!IS_ENABLED(CONFIG_PREEMPT_RT) &&
++			    unlikely(contended)) {
+ 				spin_unlock(&q->busylock);
+ 				contended = false;
+ 			}
+@@ -5744,6 +5748,11 @@ static __latent_entropy void net_tx_action(void)
+ 
+ 			if (!(q->flags & TCQ_F_NOLOCK)) {
+ 				root_lock = qdisc_lock(q);
++				/* See __dev_xmit_skb(): on PREEMPT_RT whoever
++				 * runs the qdisc holds busylock.
++				 */
++				if (IS_ENABLED(CONFIG_PREEMPT_RT))
++					spin_lock(&q->busylock);
+ 				spin_lock(root_lock);
+ 			} else if (unlikely(test_bit(__QDISC_STATE_DEACTIVATED,
+ 						     &q->state))) {
+@@ -5761,8 +5770,11 @@ static __latent_entropy void net_tx_action(void)
+ 
+ 			clear_bit(__QDISC_STATE_SCHED, &q->state);
+ 			qdisc_run(q);
+-			if (root_lock)
++			if (root_lock) {
+ 				spin_unlock(root_lock);
++				if (IS_ENABLED(CONFIG_PREEMPT_RT))
++					spin_unlock(&q->busylock);
++			}
+ 		}
+ 
+ 		rcu_read_unlock();
+-- 
+2.47.3
+
