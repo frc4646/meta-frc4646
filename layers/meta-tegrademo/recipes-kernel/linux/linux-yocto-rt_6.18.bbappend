@@ -17,6 +17,7 @@ SRC_URI:append:tegra = " \
     file://0003-io_uring-bound-the-number-of-released-rings-waiting-.patch \
     file://0004-io_uring-futex-return-a-wait-s-data-to-the-cache-whe.patch \
     file://0009-r8169-re-enable-interrupt-source-RxOverflow.patch \
+    file://0010-net-run-the-NAPI-deferred-poll-timer-in-hard-IRQ-context.patch \
 "
 
 # Fragments in SRC_URI are merged before KERNEL_FEATURES, and the features

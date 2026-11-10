@@ -1,0 +1,82 @@
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Thu, 30 Oct 2026 01:50:00 -0700
+Subject: [PATCH] net: run the NAPI deferred-poll timer in hard IRQ context
+
+With napi_defer_hard_irqs and gro_flush_timeout set, the device IRQ
+stays masked between polls and napi->timer re-polls the NAPI.  The timer
+is HRTIMER_MODE_REL_PINNED, which PREEMPT_RT turns into a soft timer
+expiring in ktimers/N at SCHED_FIFO 1.  Any real-time task above that
+delays the poll, and received packets wait in the ring meanwhile: on an
+Orin running FIFO 5-21 vision threads, idle SCTP round trips over the
+r8169 went from a p99 of 311 us (defer off) to 2.4 ms (defer on).
+
+napi_watchdog() only takes NAPI_STATE_SCHED and calls
+__napi_schedule(), which wakes the NAPI thread or queues the NAPI and
+raises NET_RX with interrupts off; none of it sleeps on RT.  So set the
+timer up and start it as HARD.  Without PREEMPT_RT this changes nothing,
+as timers are hard there unless asked to be soft.
+
+On PREEMPT_RT with a non-threaded NAPI, NET_RX raised from hard IRQ is
+handled by ksoftirqd instead of ktimers, so this is aimed at threaded
+NAPI.  The mode can't follow the threaded setting, because an hrtimer's
+hard/soft mode is fixed when it is set up.
+
+Upstream-Status: Inappropriate [experiment]
+Assisted-by: LLM
+---
+--- a/net/core/dev.c	2026-10-30 01:46:09.000000000 -0700
++++ b/net/core/dev.c	2026-10-30 01:46:20.000000000 -0700
+@@ -6685,6 +6685,15 @@
+ }
+ EXPORT_SYMBOL(__napi_schedule_irqoff);
+ 
++/* napi->timer re-polls a NAPI whose device IRQ stays masked
++ * (napi_defer_hard_irqs, IRQ suspend).  On PREEMPT_RT a timer that isn't
++ * HARD expires in the ktimers thread, so the poll waits behind every
++ * real-time task above that thread's priority while received packets sit
++ * in the ring.  napi_watchdog() only takes NAPI_STATE_SCHED and wakes the
++ * NAPI thread or raises NET_RX, which is fine in hard interrupt context.
++ */
++#define NAPI_TIMER_MODE HRTIMER_MODE_REL_PINNED_HARD
++
+ bool napi_complete_done(struct napi_struct *n, int work_done)
+ {
+ 	unsigned long flags, val, new, timeout = 0;
+@@ -6749,8 +6758,7 @@
+ 	}
+ 
+ 	if (timeout)
+-		hrtimer_start(&n->timer, ns_to_ktime(timeout),
+-			      HRTIMER_MODE_REL_PINNED);
++		hrtimer_start(&n->timer, ns_to_ktime(timeout), NAPI_TIMER_MODE);
+ 	return ret;
+ }
+ EXPORT_SYMBOL(napi_complete_done);
+@@ -6790,8 +6798,7 @@
+ 	gro_flush_normal(&napi->gro, HZ >= 1000);
+ 
+ 	clear_bit(NAPI_STATE_SCHED, &napi->state);
+-	hrtimer_start(&napi->timer, ns_to_ktime(timeout),
+-		      HRTIMER_MODE_REL_PINNED);
++	hrtimer_start(&napi->timer, ns_to_ktime(timeout), NAPI_TIMER_MODE);
+ }
+ 
+ enum {
+@@ -6967,7 +6974,7 @@
+ 
+ 		if (timeout)
+ 			hrtimer_start(&napi->timer, ns_to_ktime(timeout),
+-				      HRTIMER_MODE_REL_PINNED);
++				      NAPI_TIMER_MODE);
+ 	}
+ 	rcu_read_unlock();
+ }
+@@ -7471,7 +7478,7 @@
+ 
+ 	INIT_LIST_HEAD(&napi->poll_list);
+ 	INIT_HLIST_NODE(&napi->napi_hash_node);
+-	hrtimer_setup(&napi->timer, napi_watchdog, CLOCK_MONOTONIC, HRTIMER_MODE_REL_PINNED);
++	hrtimer_setup(&napi->timer, napi_watchdog, CLOCK_MONOTONIC, NAPI_TIMER_MODE);
+ 	gro_init(&napi->gro);
+ 	napi->skb = NULL;
+ 	napi->poll = poll;
