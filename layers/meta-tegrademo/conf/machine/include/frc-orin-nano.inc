@@ -1,0 +1,119 @@
+# What the robot's Orin Nano needs, on its own carrier
+# (p3768-0000-p3767-0003.conf) or a devkit (jetson-orin-nano-devkit-nvme.conf).
+# Those set the module's identity first, since everything here and in
+# meta-tegra's includes is a default they override.
+
+TNSPEC_BOOTDEV ?= "nvme0n1p1"
+PARTITION_LAYOUT_TEMPLATE_DEFAULT ?= "flash_t234_qspi.xml"
+PARTITION_LAYOUT_TEMPLATE_DEFAULT_SUPPORTS_REDUNDANT ?= "1"
+PARTITION_LAYOUT_EXTERNAL_DEFAULT ?= "flash_l4t_t234_nvme.xml"
+TEGRAFLASH_NO_INTERNAL_STORAGE = "1"
+
+require conf/machine/include/orin-nano.inc
+require conf/machine/include/p3768.inc
+
+# efi=runtime: PREEMPT_RT turns EFI runtime services off by default, which
+# takes away the EFI variables that the boot slot tools use.
+KERNEL_ARGS = "console=ttyTCU0,115200 firmware_class.path=/etc/firmware fbcon=map:0 nospectre_bhb video=efifb:off console=tty0 efi=runtime net.ifnames=0 systemd.gpt_auto=0 audit=0"
+
+# No WiFi or Bluetooth on the robot.
+MACHINE_FEATURES:remove = "wifi bluetooth"
+DEVKIT_WIFI_RRECOMMENDS = ""
+MACHINE_EXTRA_RRECOMMENDS:remove = "nv-kernel-module-rtk-btusb tegra-firmware-rtl8822"
+
+# Without it, a root filesystem which fails to mount as xfs is retried as
+# every other filesystem type, and yaffs crashes the kernel trying.
+KERNEL_ARGS += " rootfstype=xfs"
+
+# KASLR forces kernel page table isolation on, which switches page tables on
+# every entry from user space.  The Cortex-A78 isn't vulnerable to Meltdown,
+# so all it protects is the kernel's randomized address.
+KERNEL_ARGS += " kpti=0"
+# Keep info-level kernel messages off the 115200 baud serial console.  They
+# are all still in the journal and dmesg.
+KERNEL_ARGS += " loglevel=4"
+# Train the PCIe links in parallel with the rest of the kernel's start-up.
+# NVMe and Ethernet both sit behind them.
+KERNEL_ARGS += " driver_async_probe=tegra194-pcie"
+
+# No audio or CSI cameras on the robot.  The kernel has no sound support
+# (config_trim.cfg), so drop alsa-state and NVIDIA's audio driver package,
+# which depend on the sound modules; the ALSA libraries stay, since the distro
+# still has alsa.  NVIDIA's CSI camera drivers go too (DT_DISABLED_NODES
+# below); USB cameras use the kernel's own uvcvideo.
+MACHINE_FEATURES:remove = "alsa"
+TEGRA_OOT_ALSA_DRIVERS = ""
+MACHINE_EXTRA_RRECOMMENDS:remove = " \
+    kernel-module-snd-hda-codec-hdmi \
+    kernel-module-snd-hda-tegra \
+    kernel-module-snd-soc-tegra-audio-graph-card \
+    kernel-module-snd-soc-tegra186-asrc \
+    kernel-module-snd-soc-tegra186-dspk \
+    kernel-module-snd-soc-tegra210-admaif \
+    kernel-module-snd-soc-tegra210-adx \
+    kernel-module-snd-soc-tegra210-ahub \
+    kernel-module-snd-soc-tegra210-amx \
+    kernel-module-snd-soc-tegra210-dmic \
+    kernel-module-snd-soc-tegra210-i2s \
+    kernel-module-snd-soc-tegra210-mixer \
+    kernel-module-snd-soc-tegra210-mvc \
+    kernel-module-snd-soc-tegra210-ope \
+    kernel-module-snd-soc-tegra210-sfc \
+    kernel-module-tegra-aconnect \
+    kernel-module-tegra210-adma \
+    nvidia-kernel-oot-alsa \
+    nvidia-kernel-oot-cameras \
+"
+
+# UEFI built for NVMe only: no network boot, USB, display or shell, and no
+# boot menu countdown.  UEFI can't read the xfs root filesystem, so
+# L4TLauncher boots the kernel partition, not /boot/extlinux.
+TEGRA_MINIMAL_BOOT = "1"
+
+# Hardware the robot doesn't use (see nvidia-kernel-oot-dtb_%.bbappend).
+# /bus@0/aconnect@2900000 holds the audio processing engine: the audio hub,
+# its DMA and interrupt controllers and the audio DSP.  The audio hub's nodes
+# all reference each other, and printed about 130 "Fixed dependency cycle(s)"
+# lines at every boot.  /bus@0/hda@3510000 is HDMI audio, and /sound is the
+# sound card that ties them together.
+#
+# /bus@0/pcie@14100000 is the M.2 Key E slot for a Wi-Fi card, and
+# /bus@0/pcie@141e0000 the second M.2 Key M slot.  Both are empty on the
+# robot, and the kernel waits for a link on each at every boot.
+#
+# /display@13800000 is the display controller, and /dce@d800000 the
+# co-processor which drives it.  The robot never has a display.  CUDA and
+# TensorRT use the GPU through nvgpu, not the display driver.
+#
+# The rest are the CSI camera path: video input, image signal processor,
+# CSI receiver, the camera co-processor and its capture channels.  The robot
+# only has USB cameras.
+DT_DISABLED_NODES = " \
+    /display@13800000 \
+    /dce@d800000 \
+    /bus@0/host1x@13e00000/vi0@15c00000 \
+    /bus@0/host1x@13e00000/vi0-thi@15f00000 \
+    /bus@0/host1x@13e00000/vi1@14c00000 \
+    /bus@0/host1x@13e00000/vi1-thi@14f00000 \
+    /bus@0/host1x@13e00000/isp@14800000 \
+    /bus@0/host1x@13e00000/isp-thi@14b00000 \
+    /bus@0/host1x@13e00000/nvcsi@15a00000 \
+    /rtcpu@bc00000 \
+    /tegra-capture-vi \
+    /tegra-capture-isp \
+    /camera-ivc-channels \
+    /tegra-rtcpu-trace \
+    /bus@0/aconnect@2900000 \
+    /bus@0/hda@3510000 \
+    /sound \
+    /bus@0/pcie@14100000 \
+    /bus@0/pcie@141e0000 \
+"
+
+# PCIe, its PHY and NVMe are built into the kernel (config_boot_drivers.cfg),
+# so there are no module packages for these.
+MACHINE_ESSENTIAL_EXTRA_RRECOMMENDS:remove = "kernel-module-pcie-tegra194 kernel-module-phy-tegra194-p2u kernel-module-nvme"
+
+# nvgpu and nvmap are loaded by nv-load-gpu-modules.service instead (see
+# tegra-configs_%.bbappend), so the network doesn't wait for them.
+KERNEL_MODULE_AUTOLOAD:remove = "nvgpu nvmap"
