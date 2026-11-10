@@ -25,7 +25,7 @@ KERNEL_FEATURES:append:tegra = " config_trim.cfg config_boot_drivers.cfg config_
 
 # Our own kernel-meta: features listed here are applied after meta-tegra's.
 SRC_URI:append:tegra = " file://frc-kmeta;type=kmeta;destsuffix=frc-kmeta"
-KERNEL_FEATURES:append:tegra = " features/frc/bpmp-debugfs-async.scc"
+KERNEL_FEATURES:append:tegra = " features/frc/bpmp-debugfs-async.scc features/frc/tegra186-timer-kexec.scc"
 
 # config_btf.cfg: CONFIG_DEBUG_INFO_BTF depends on CONFIG_PAHOLE_VERSION, which
 # Kconfig reads from pahole.  linux-yocto.inc makes pahole available and stops

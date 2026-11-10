@@ -1,0 +1,3 @@
+# A feature, rather than a patch in SRC_URI, so that it is applied after
+# meta-tegra's NVIDIA SAUCE patch to timer-tegra186 that it fixes.
+patch 0003-clocksource-timer-tegra186-request-the-IRQ-after-creating-the-WDT.patch

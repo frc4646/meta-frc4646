@@ -1,0 +1,54 @@
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Fri, 23 Oct 2026 19:30:00 -0700
+Subject: [PATCH] clocksource: timer-tegra186: request the IRQ after creating
+ the WDT
+
+"NVIDIA: SAUCE: clocksource: timer-tegra186: Enable WDT at probe"
+requests the timer's IRQ before it creates the watchdog, and the handler
+dereferences tegra->wdt.  After a kexec, the previous kernel leaves the
+watchdog running with its interrupt pending, so the handler runs as soon
+as the IRQ is requested, with tegra->wdt still NULL:
+
+  Unable to handle kernel NULL pointer dereference at virtual address 00000000000000c0
+  pc : tegra186_timer_irq+0x1c/0x60
+  Kernel panic - not syncing: Oops: Fatal exception in interrupt
+
+and MB1 resets the board.  Every kexec on the Orin Nano has ended that
+way.  Create the watchdog first, as mainline has since "clocksource/
+drivers/timer-tegra186: Reserve and service a kernel watchdog".
+
+Upstream-Status: Inappropriate [NVIDIA SAUCE patch; mainline is not affected]
+Assisted-by: LLM
+---
+diff --git a/drivers/clocksource/timer-tegra186.c b/drivers/clocksource/timer-tegra186.c
+index 36bb08825c5c..b0f349e70772 100644
+--- a/drivers/clocksource/timer-tegra186.c
++++ b/drivers/clocksource/timer-tegra186.c
+@@ -474,13 +474,6 @@ static int tegra186_timer_probe(struct platform_device *pdev)
+ 
+ 	irq = err;
+ 
+-	err = devm_request_irq(dev, irq, tegra186_timer_irq, 0,
+-			       "tegra186-timer", tegra);
+-	if (err < 0) {
+-		dev_err(dev, "failed to request IRQ#%u: %d\n", irq, err);
+-		return err;
+-	}
+-
+ 	/* create a watchdog using a preconfigured timer */
+ 	tegra->wdt = tegra186_wdt_create(tegra, 0);
+ 	if (IS_ERR(tegra->wdt)) {
+@@ -489,6 +482,13 @@ static int tegra186_timer_probe(struct platform_device *pdev)
+ 		return err;
+ 	}
+ 
++	err = devm_request_irq(dev, irq, tegra186_timer_irq, 0,
++			       "tegra186-timer", tegra);
++	if (err < 0) {
++		dev_err(dev, "failed to request IRQ#%u: %d\n", irq, err);
++		return err;
++	}
++
+ 	err = tegra186_timer_tsc_init(tegra);
+ 	if (err < 0) {
+ 		dev_err(dev, "failed to register TSC counter: %d\n", err);
