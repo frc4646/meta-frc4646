@@ -1,0 +1,17 @@
+# Mount USB drives at /media/<device> when they're plugged in.
+# x-systemd.device-bound binds the mount unit to the device, so unplugging
+# the drive unmounts it, and --collect removes the unit.  A drive formatted
+# without a partition table has its filesystem on the disk itself, so match
+# on the filesystem rather than on partitions.
+ACTION!="add", GOTO="usb_mount_end"
+SUBSYSTEM!="block", GOTO="usb_mount_end"
+KERNEL!="sd[a-z]*", GOTO="usb_mount_end"
+SUBSYSTEMS!="usb", GOTO="usb_mount_end"
+ENV{ID_FS_USAGE}!="filesystem", GOTO="usb_mount_end"
+
+# FAT and exFAT have no owners or permissions: let everyone write, as
+# pmount --umask 000 did.
+ENV{ID_FS_TYPE}=="vfat|exfat", RUN+="/usr/bin/systemd-mount --no-block --collect --options=nosuid,nodev,umask=000,x-systemd.device-bound $devnode /media/%k", GOTO="usb_mount_end"
+RUN+="/usr/bin/systemd-mount --no-block --collect --options=nosuid,nodev,x-systemd.device-bound $devnode /media/%k"
+
+LABEL="usb_mount_end"
