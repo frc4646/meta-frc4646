@@ -3,22 +3,66 @@ From: Austin Schuh <austin.linux@gmail.com>
 Date: Mon, 2 Nov 2026 20:59:44 -0800
 Subject: [PATCH] sctp: Limit how much is queued below a socket
 
-DRAFT prototype of TX small queues; see the comment in outqueue.c.  Uses a
-module parameter so it can be tested without rebuilding struct net.  Needs
-review, a sysctl and Signed-off-by.
+DRAFT prototype of TX small queues; see the comment in outqueue.c.  The
+limit is net.sctp.limit_output_bytes, like tcp_limit_output_bytes, and is
+off by default.  Needs review and Signed-off-by.
 
 Upstream-Status: Pending
 Assisted-by: LLM
 ---
- include/net/sctp/structs.h |  10 +++
- net/sctp/offload.c         |  14 +++++
- net/sctp/output.c          |   1 +
- net/sctp/outqueue.c        | 125 ++++++++++++++++++++++++++++++++++++-
- net/sctp/socket.c          |   6 ++
- 5 files changed, 155 insertions(+), 1 deletion(-)
+ Documentation/networking/ip-sysctl.rst |  14 +++
+ include/net/netns/sctp.h               |   5 ++
+ include/net/sctp/structs.h             |  10 +++
+ net/sctp/offload.c                     |  14 +++
+ net/sctp/output.c                      |   1 +
+ net/sctp/outqueue.c                    | 120 ++++++++++++++++++++++++-
+ net/sctp/socket.c                      |   6 ++
+ net/sctp/sysctl.c                      |   9 ++
+ 8 files changed, 178 insertions(+), 1 deletion(-)
 
+diff --git a/Documentation/networking/ip-sysctl.rst b/Documentation/networking/ip-sysctl.rst
+index 27a861053b2f..e5077a16dfa2 100644
+--- a/Documentation/networking/ip-sysctl.rst
++++ b/Documentation/networking/ip-sysctl.rst
+@@ -3716,6 +3716,20 @@ l3mdev_accept - BOOLEAN
+ 
+ 	Default: 1 (enabled)
+ 
++limit_output_bytes - INTEGER
++	Controls the SCTP small queue limit per socket, like
++	tcp_limit_output_bytes.  SCTP finds out how much is queued below it
++	only through the RTT, so without losses it queues up to a whole
++	congestion window in the qdisc and device, and can't take any of it
++	back.  Stream priorities and new messages then wait behind all of it.
++	Once a socket has this many bytes (by skb->truesize) on the qdisc or
++	device, its new data stays in the stream scheduler until half of them
++	have been sent.
++
++	0 disables the limit.
++
++	Default: 0
++
+ 
+ ``/proc/sys/net/core/*``
+ ========================
+diff --git a/include/net/netns/sctp.h b/include/net/netns/sctp.h
+index c0f97f36389e..180bed8c86ad 100644
+--- a/include/net/netns/sctp.h
++++ b/include/net/netns/sctp.h
+@@ -90,6 +90,11 @@ struct netns_sctp {
+ 	/* The interval for PLPMTUD probe timer */
+ 	unsigned int probe_interval;
+ 
++	/* Bytes a socket may have in the qdisc and device before new data
++	 * stays in the stream scheduler.  0 for no limit.
++	 */
++	int limit_output_bytes;
++
+ 	/* Association.Max.Retrans  - 10 attempts
+ 	 * Path.Max.Retrans	    - 5	 attempts (per destination address)
+ 	 * Max.Init.Retransmits	    - 8	 attempts
 diff --git a/include/net/sctp/structs.h b/include/net/sctp/structs.h
-index 2ae3902..01f19f9 100644
+index e2191b158ac4..806c373e3611 100644
 --- a/include/net/sctp/structs.h
 +++ b/include/net/sctp/structs.h
 @@ -237,6 +237,11 @@ struct sctp_sock {
@@ -33,7 +77,7 @@ index 2ae3902..01f19f9 100644
  };
  
  #define sctp_sk(ptr) container_of_const(ptr, struct sctp_sock, inet.sk)
-@@ -1121,6 +1126,11 @@ void sctp_retransmit(struct sctp_outq *q, struct sctp_transport *transport,
+@@ -1122,6 +1127,11 @@ void sctp_retransmit(struct sctp_outq *q, struct sctp_transport *transport,
  		     enum sctp_retransmit_reason reason);
  void sctp_retransmit_mark(struct sctp_outq *, struct sctp_transport *, __u8);
  void sctp_outq_uncork(struct sctp_outq *, gfp_t gfp);
@@ -46,7 +90,7 @@ index 2ae3902..01f19f9 100644
  		       struct sctp_sndrcvinfo *sinfo, int msg_len);
  void sctp_generate_fwdtsn(struct sctp_outq *q, __u32 sack_ctsn);
 diff --git a/net/sctp/offload.c b/net/sctp/offload.c
-index e6f863c..a6113bb 100644
+index e6f863c031b4..a6113bb25607 100644
 --- a/net/sctp/offload.c
 +++ b/net/sctp/offload.c
 @@ -73,6 +73,20 @@ static struct sk_buff *sctp_gso_segment(struct sk_buff *skb,
@@ -71,7 +115,7 @@ index e6f863c..a6113bb 100644
  	if (!(features & NETIF_F_SCTP_CRC)) {
  		for (skb = segs; skb; skb = skb->next) {
 diff --git a/net/sctp/output.c b/net/sctp/output.c
-index 23e9630..e52c41d 100644
+index 23e96305cad7..e52c41d444ec 100644
 --- a/net/sctp/output.c
 +++ b/net/sctp/output.c
 @@ -650,6 +650,7 @@ int sctp_packet_transmit(struct sctp_packet *packet, gfp_t gfp)
@@ -83,19 +127,18 @@ index 23e9630..e52c41d 100644
  	    tp->dst_pending_confirm)
  		tp->dst_pending_confirm = 0;
 diff --git a/net/sctp/outqueue.c b/net/sctp/outqueue.c
-index 3a02fbf..d2233b7 100644
+index f440e65b89e9..ee6b2fbdee27 100644
 --- a/net/sctp/outqueue.c
 +++ b/net/sctp/outqueue.c
-@@ -27,6 +27,8 @@
+@@ -27,6 +27,7 @@
  #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
  
  #include <linux/types.h>
-+#include <linux/moduleparam.h>
 +#include <linux/workqueue.h>
  #include <linux/list.h>   /* For struct list_head */
  #include <linux/socket.h>
  #include <linux/ip.h>
-@@ -1083,7 +1085,8 @@ static void sctp_outq_flush_data(struct sctp_flush_ctx *ctx,
+@@ -1084,7 +1085,8 @@ static void sctp_outq_flush_data(struct sctp_flush_ctx *ctx,
  		sctp_transport_burst_limited(ctx->transport);
  
  	/* Finally, transmit new packets.  */
@@ -105,7 +148,7 @@ index 3a02fbf..d2233b7 100644
  		__u32 sid = ntohs(chunk->subh.data_hdr->stream);
  		__u8 stream_state = SCTP_SO(&ctx->asoc->stream, sid)->state;
  
-@@ -1196,6 +1199,126 @@ static void sctp_outq_flush_transports(struct sctp_flush_ctx *ctx)
+@@ -1197,6 +1199,122 @@ static void sctp_outq_flush_transports(struct sctp_flush_ctx *ctx)
  	}
  }
  
@@ -124,21 +167,17 @@ index 3a02fbf..d2233b7 100644
 +	SCTP_TSQ_DEFERRED,
 +};
 +
-+/* TODO(upstreaming): This wants to be net.sctp.limit_output_bytes.  It's a
-+ * module parameter to be able to test without rebuilding struct net.
-+ */
-+static int sctp_limit_output_bytes;
-+module_param_named(limit_output_bytes, sctp_limit_output_bytes, int, 0644);
-+MODULE_PARM_DESC(limit_output_bytes,
-+		 "Max bytes queued below a socket before leaving new data in "
-+		 "the stream scheduler, by skb->truesize.  0 for no limit.");
++static int sctp_limit_output_bytes(const struct sock *sk)
++{
++	return READ_ONCE(sock_net(sk)->sctp.limit_output_bytes);
++}
 +
 +bool sctp_tsq_throttled(struct sock *sk)
 +{
 +	struct sctp_sock *sp = sctp_sk(sk);
-+	int limit = READ_ONCE(sctp_limit_output_bytes);
++	int limit = sctp_limit_output_bytes(sk);
 +
-+	if (limit <= 0 || atomic_read(&sp->tx_bytes) <= limit)
++	if (!limit || atomic_read(&sp->tx_bytes) <= limit)
 +		return false;
 +
 +	/* The wakeup has to work after close, when the only thing keeping the
@@ -164,7 +203,7 @@ index 3a02fbf..d2233b7 100644
 +
 +	/* Wait until half of it is gone, to not wake up for every packet. */
 +	if (test_bit(SCTP_TSQ_THROTTLED, &sp->tsq_flags) &&
-+	    bytes <= max(READ_ONCE(sctp_limit_output_bytes), 0) / 2 &&
++	    bytes <= sctp_limit_output_bytes(sk) / 2 &&
 +	    !test_and_set_bit(SCTP_TSQ_QUEUED, &sp->tsq_flags)) {
 +		/* The skb only keeps the memory around, and the socket might
 +		 * be going away.
@@ -181,7 +220,7 @@ index 3a02fbf..d2233b7 100644
 +/* Called with skb's size final, right before sending it. */
 +void sctp_tsq_charge(struct sk_buff *skb)
 +{
-+	if (READ_ONCE(sctp_limit_output_bytes) <= 0)
++	if (!sctp_limit_output_bytes(skb->sk))
 +		return;
 +
 +	atomic_add(skb->truesize, &sctp_sk(skb->sk)->tx_bytes);
@@ -233,10 +272,10 @@ index 3a02fbf..d2233b7 100644
   *
   * Description: Send everything in q which we legally can, subject to
 diff --git a/net/sctp/socket.c b/net/sctp/socket.c
-index c763eb3..7aaffc6 100644
+index 03588ac5c382..01bb01a0d03b 100644
 --- a/net/sctp/socket.c
 +++ b/net/sctp/socket.c
-@@ -5077,6 +5077,10 @@ static int sctp_init_sock(struct sock *sk)
+@@ -5087,6 +5087,10 @@ static int sctp_init_sock(struct sock *sk)
  	sp->frag_interleave = 0;
  	sp->probe_interval = net->sctp.probe_interval;
  
@@ -247,7 +286,7 @@ index c763eb3..7aaffc6 100644
  	/* Create a per socket endpoint structure.  Even if we
  	 * change the data structure relationships, this may still
  	 * be useful for storing pre-connect address information.
-@@ -9673,6 +9677,7 @@ struct proto sctp_prot = {
+@@ -9694,6 +9698,7 @@ struct proto sctp_prot = {
  	.bind        =	sctp_bind,
  	.bind_add    =  sctp_bind_add,
  	.backlog_rcv =	sctp_backlog_rcv,
@@ -255,7 +294,7 @@ index c763eb3..7aaffc6 100644
  	.hash        =	sctp_hash,
  	.unhash      =	sctp_unhash,
  	.no_autobind =	true,
-@@ -9728,6 +9733,7 @@ struct proto sctpv6_prot = {
+@@ -9749,6 +9754,7 @@ struct proto sctpv6_prot = {
  	.bind		= sctp_bind,
  	.bind_add	= sctp_bind_add,
  	.backlog_rcv	= sctp_backlog_rcv,
@@ -263,6 +302,26 @@ index c763eb3..7aaffc6 100644
  	.hash		= sctp_hash,
  	.unhash		= sctp_unhash,
  	.no_autobind	= true,
+diff --git a/net/sctp/sysctl.c b/net/sctp/sysctl.c
+index fca840484ebf..07e6f50f1279 100644
+--- a/net/sctp/sysctl.c
++++ b/net/sctp/sysctl.c
+@@ -382,6 +382,15 @@ static struct ctl_table sctp_net_table[] = {
+ 		.extra1		= SYSCTL_ZERO,
+ 		.extra2		= &pf_expose_max,
+ 	},
++	{
++		.procname	= "limit_output_bytes",
++		.data		= &init_net.sctp.limit_output_bytes,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax,
++		.extra1		= SYSCTL_ZERO,
++		.extra2		= SYSCTL_INT_MAX,
++	},
+ };
+ 
+ static int proc_sctp_do_hmac_alg(const struct ctl_table *ctl, int write,
 -- 
 2.47.3
 

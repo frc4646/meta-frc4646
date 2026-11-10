@@ -44,7 +44,7 @@ upstream, in 6.18.60; drop it when the kernel gets there.
 | 0009 | r8169 interrupts on RX overflow again; without it the RTL8168h could stop interrupting and drop the link for 5 seconds under receive bursts. |
 | 0010 | The NAPI deferred-poll timer runs in hard interrupt context, not in `ktimers` at FIFO 1.  `eth0.rules`' interrupt deferral depends on it. |
 | 0011 | A preempted task that owns the qdisc is boosted, so a high-priority sender's packets don't wait tens of milliseconds behind it. |
-| 0012-0022 | SCTP: reassembly that isn't quadratic, partial delivery and PR-SCTP fixes, and a limit on how much a socket queues below SCTP (0014, `limit_output_bytes`). |
+| 0012-0022 | SCTP: reassembly that isn't quadratic, partial delivery and PR-SCTP fixes, and a limit on how much a socket queues below SCTP (0014, `net.sctp.limit_output_bytes`). |
 
 `frc-kmeta` has two more: the BPMP debugfs mirror is built in the
 background (boot time), and the tegra186 timer requests its interrupt after
@@ -107,7 +107,7 @@ apply:
 
 * `net.sctp.intl_enable=1`, so the message bridge can use I-DATA interleaving.
 * `net.core.wmem_max` and `rmem_max` of 8 MB, big enough for an image.
-* `limit_output_bytes=16384` (`modprobe.d/sctp.conf`, patch 0014): once 16 KiB
+* `net.sctp.limit_output_bytes=16384` (patch 0014): once 16 KiB
   from a socket waits in the qdisc and NIC, new data stays in SCTP's stream
   scheduler, so stream priorities and fresh messages don't wait behind a whole
   congestion window.
