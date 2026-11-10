@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Tue, 10 Nov 2026 09:31:10 -0800
+Subject: [PATCH] sched/rt: Push the running task away from a pinned task again
+
+Commit dae5c0292080 ("sched/rt,dl: Skip migrate-disabled tasks when
+picking a push candidate") made pick_next_pushable_task() skip
+migrate-disabled tasks.  push_rt_task() used it to find the task to
+push, so it no longer sees a migrate-disabled task waiting behind
+rq->curr, and never takes the fallback that pushes rq->curr to a
+lower-priority CPU instead.  The pinned task now waits until rq->curr
+sleeps, even with other CPUs idle.
+
+The commit's message says nothing is lost because that fallback always
+failed the re-check in find_lock_lowest_rq().  That holds when the
+pinned task and rq->curr have the same priority, as in its trace.  When
+rq->curr has higher priority, the usual case since it preempted the
+pinned task, rq->curr heads the pushable list once the stopper preempts
+it, the re-check passes, and the push works.
+
+On PREEMPT_RT every task in a spinlock_t section is migrate-disabled, so
+this is common.  On a Jetson Orin (6.18.59-rt6), a FIFO 5 task preempted
+in one by a FIFO 6 CPU hog waited up to 133 ms with two of the six CPUs
+idle.  On 6.18.39, without the commit, the same test never waited more
+than 10 ms.
+
+Look for a pinned task at the head of the queue first, as before.  With
+pick_next_pushable_task() now skipping pinned tasks, the re-check passes
+for rq->curr in the equal-priority case too, so the push-IPI loop the
+commit fixed doesn't come back: rq->curr moves away and the pinned task
+runs.
+
+Fixes: dae5c0292080 ("sched/rt,dl: Skip migrate-disabled tasks when picking a push candidate")
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ kernel/sched/rt.c | 27 ++++++++++++++++++++++++++-
+ 1 file changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/kernel/sched/rt.c b/kernel/sched/rt.c
+index fc9737decfb7..2942a7c638b1 100644
+--- a/kernel/sched/rt.c
++++ b/kernel/sched/rt.c
+@@ -1851,6 +1851,29 @@ static int find_lowest_rq(struct task_struct *task)
+ 	return -1;
+ }
+ 
++/*
++ * The highest priority queued task, if it is migrate-disabled.  On PREEMPT_RT
++ * that's common: any task preempted inside a spinlock_t section.  It can't be
++ * pushed, so push_rt_task() pushes the running task away instead, which gives
++ * the pinned task its CPU back.  pick_next_pushable_task() skips such a task,
++ * so it can't find it.
++ */
++static struct task_struct *pick_next_pinned_task(struct rq *rq)
++{
++	struct task_struct *p;
++
++	if (!has_pushable_tasks(rq))
++		return NULL;
++
++	plist_for_each_entry(p, &rq->rt.pushable_tasks, pushable_tasks) {
++		if (task_on_cpu(rq, p))
++			continue;
++		return is_migration_disabled(p) ? p : NULL;
++	}
++
++	return NULL;
++}
++
+ static struct task_struct *pick_next_pushable_task(struct rq *rq)
+ {
+ 	struct plist_head *head = &rq->rt.pushable_tasks;
+@@ -1954,7 +1977,9 @@ static int push_rt_task(struct rq *rq, bool pull)
+ 	if (!rq->rt.overloaded)
+ 		return 0;
+ 
+-	next_task = pick_next_pushable_task(rq);
++	next_task = pick_next_pinned_task(rq);
++	if (!next_task)
++		next_task = pick_next_pushable_task(rq);
+ 	if (!next_task)
+ 		return 0;
+ 

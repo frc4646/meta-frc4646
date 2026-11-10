@@ -30,6 +30,7 @@ SRC_URI:append:tegra = " \
     file://0020-sctp-Hold-partial-delivery-pieces-until-there-s-pd_p.patch \
     file://0021-sctp-Build-large-messages-without-holding-the-socket.patch \
     file://0022-sctp-Restart-RTT-measurement-when-the-timed-chunk-is.patch \
+    file://0023-sched-rt-Push-the-running-task-away-from-a-pinned-ta.patch \
 "
 
 # Fragments in SRC_URI are merged before KERNEL_FEATURES, and the features

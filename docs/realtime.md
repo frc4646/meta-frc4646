@@ -45,6 +45,7 @@ upstream, in 6.18.60; drop it when the kernel gets there.
 | 0010 | The NAPI deferred-poll timer runs in hard interrupt context, not in `ktimers` at FIFO 1.  `eth0.rules`' interrupt deferral depends on it. |
 | 0011 | A preempted task that owns the qdisc is boosted, so a high-priority sender's packets don't wait tens of milliseconds behind it. |
 | 0012-0022 | SCTP: reassembly that isn't quadratic, partial delivery and PR-SCTP fixes, and a limit on how much a socket queues below SCTP (0014, `net.sctp.limit_output_bytes`). |
+| 0023 | A real-time task preempted inside a `spinlock_t` section gets its CPU back by pushing the preempting task to another CPU, as before 6.18.53.  Without it, SCTP round trips took up to 133 ms under a `SCHED_FIFO` CPU hog while other CPUs sat idle. |
 
 `frc-kmeta` has two more: the BPMP debugfs mirror is built in the
 background (boot time), and the tegra186 timer requests its interrupt after
