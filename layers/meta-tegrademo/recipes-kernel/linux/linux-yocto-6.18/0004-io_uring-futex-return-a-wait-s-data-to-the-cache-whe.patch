@@ -1,0 +1,57 @@
+From 1a0dd7f8c34481264638a6d5edce45819f33782d Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Thu, 15 Oct 2026 14:04:26 -0700
+Subject: [PATCH] io_uring/futex: return a wait's data to the cache when it
+ fails to arm
+
+io_futex_wait() takes its io_futex_data from ctx->futex_cache, and a
+completed wait gives it back (io_futex_complete()).  A wait that fails to
+arm instead frees it with io_req_async_data_free(), which is kfree().
+The usual failure is -EAGAIN from futex_wait_setup(): the futex word no
+longer holds the expected value.  That is routine for a waiter that
+re-arms with the value it last read, since the word moves every time
+there is something to wake for.  Each such failure takes an object out
+of the cache for good, so the cache drains, and from then on the waits
+that miss it allocate from kmalloc-192 instead.
+
+Measured on an event loop re-arming one IORING_OP_FUTEX_WAIT per
+message under load: 0.39 arms per message failed with -EAGAIN, and the waiter
+did 0.39 kmalloc() and kfree() per message.  On PREEMPT_RT a kmalloc()
+or kfree() that misses the per-CPU slab takes the node's list_lock, a
+sleeping lock shared with every other user of the cache.
+
+Put the data back in the cache on that path, as the completion path
+does, while the cache is still under the submit lock.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GpUwwinTvks4P7qHQAefc5
+
+Upstream-Status: Pending
+---
+ io_uring/futex.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/io_uring/futex.c b/io_uring/futex.c
+index 64f3bd51c84c..707305f3536c 100644
+--- a/io_uring/futex.c
++++ b/io_uring/futex.c
+@@ -301,6 +301,16 @@ int io_futex_wait(struct io_kiocb *req, unsigned int issue_flags)
+ 		return IOU_ISSUE_SKIP_COMPLETE;
+ 	}
+ 
++	/*
++	 * Back to the cache it came from, as io_futex_complete() does, while
++	 * the cache is still ours.  -EAGAIN (the futex word already changed) is
++	 * a routine outcome for a waiter that re-arms with the value it last
++	 * saw; freeing it here would drain the cache, and every later wait
++	 * would allocate.
++	 */
++	io_cache_free(&ctx->futex_cache, ifd);
++	io_req_async_data_clear(req, 0);
++
+ done_unlock:
+ 	io_ring_submit_unlock(ctx, issue_flags);
+ done:
+-- 
+2.47.3
+

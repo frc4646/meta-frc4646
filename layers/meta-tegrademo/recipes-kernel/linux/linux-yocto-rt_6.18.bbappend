@@ -13,6 +13,9 @@ SRC_URI:append:tegra = " \
     file://config_preempt_rt.cfg \
     file://compressed.patch \
     file://0001-io_uring-wake-real-time-waiters-from-hard-interrupt-.patch \
+    file://0002-io_uring-don-t-trust-an-earlier-task_work-add-to-wak.patch \
+    file://0003-io_uring-bound-the-number-of-released-rings-waiting-.patch \
+    file://0004-io_uring-futex-return-a-wait-s-data-to-the-cache-whe.patch \
 "
 
 # Fragments in SRC_URI are merged before KERNEL_FEATURES, and the features

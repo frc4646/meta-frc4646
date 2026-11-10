@@ -1,0 +1,111 @@
+From d20112f0512245417d2d898bc9247bdf139e42f3 Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Thu, 15 Oct 2026 11:58:00 -0700
+Subject: [PATCH] io_uring: bound the number of released rings waiting to be
+ freed
+
+Releasing a ring only starts its teardown: io_ring_ctx_wait_and_kill()
+queues exit_work on iou_wq, and io_ring_exit_work() frees the ring once
+its references drain, after a full RCU grace period for a DEFER_TASKRUN
+ring (the synchronize_rcu() that pairs with io_req_local_work_add()).
+Until then the ring keeps its memory and its RLIMIT_MEMLOCK charge.
+Nothing limits how many rings can be in that state, so a task that
+creates and closes rings faster than iou_wq frees them builds an
+unbounded backlog.  On PREEMPT_RT, where grace periods are long, an
+event loop that is torn down and rebuilt in a loop is enough.
+
+Count released rings until they are freed, and past
+kernel.io_uring_max_dying (default 1024) make the task releasing a ring
+wait, killably, until the count drops below it.  That charges the cost
+to whoever is producing the backlog.  A final fput() from a kernel
+thread does not wait, so the workers that free rings never wait on
+themselves.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GpUwwinTvks4P7qHQAefc5
+
+Upstream-Status: Pending
+---
+ io_uring/io_uring.c | 38 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 38 insertions(+)
+
+diff --git a/io_uring/io_uring.c b/io_uring/io_uring.c
+index f8c953bd15c1..421ea6dd2e50 100644
+--- a/io_uring/io_uring.c
++++ b/io_uring/io_uring.c
+@@ -157,6 +157,18 @@ static struct workqueue_struct *iou_wq __ro_after_init;
+ static int __read_mostly sysctl_io_uring_disabled;
+ static int __read_mostly sysctl_io_uring_group = -1;
+ 
++/*
++ * Rings that have been released but not yet freed.  Freeing is deferred to
++ * iou_wq (and, for DEFER_TASKRUN rings, behind a full RCU grace period), so
++ * a task that creates and closes rings faster than that drains can pile up
++ * dead rings, their memory and their RLIMIT_MEMLOCK charge without limit.
++ * Past sysctl_io_uring_max_dying, a task closing a ring waits for the pile
++ * to drain below it, which charges the cost to whoever is churning rings.
++ */
++static atomic_t io_rings_dying = ATOMIC_INIT(0);
++static DECLARE_WAIT_QUEUE_HEAD(io_rings_dying_wq);
++static int __read_mostly sysctl_io_uring_max_dying = 1024;
++
+ #ifdef CONFIG_SYSCTL
+ static const struct ctl_table kernel_io_uring_disabled_table[] = {
+ 	{
+@@ -175,6 +187,15 @@ static const struct ctl_table kernel_io_uring_disabled_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec,
+ 	},
++	{
++		.procname	= "io_uring_max_dying",
++		.data		= &sysctl_io_uring_max_dying,
++		.maxlen		= sizeof(sysctl_io_uring_max_dying),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax,
++		.extra1		= SYSCTL_ONE,
++		.extra2		= SYSCTL_INT_MAX,
++	},
+ };
+ #endif
+ 
+@@ -3162,6 +3183,10 @@ static __cold void io_ring_exit_work(struct work_struct *work)
+ 		synchronize_rcu();
+ 
+ 	io_ring_ctx_free(ctx);
++
++	if (atomic_dec_return(&io_rings_dying) <
++	    READ_ONCE(sysctl_io_uring_max_dying))
++		wake_up_all(&io_rings_dying_wq);
+ }
+ 
+ static __cold void io_ring_ctx_wait_and_kill(struct io_ring_ctx *ctx)
+@@ -3169,6 +3194,9 @@ static __cold void io_ring_ctx_wait_and_kill(struct io_ring_ctx *ctx)
+ 	unsigned long index;
+ 	struct creds *creds;
+ 
++	/* Until io_ring_exit_work() has freed it; see io_rings_dying. */
++	atomic_inc(&io_rings_dying);
++
+ 	mutex_lock(&ctx->uring_lock);
+ 	percpu_ref_kill(&ctx->refs);
+ 	xa_for_each(&ctx->personalities, index, creds)
+@@ -3193,6 +3221,16 @@ static int io_uring_release(struct inode *inode, struct file *file)
+ 
+ 	file->private_data = NULL;
+ 	io_ring_ctx_wait_and_kill(ctx);
++
++	/*
++	 * Throttle the task that is creating dead rings faster than they are
++	 * freed.  Not a kernel thread: a final fput() from one (delayed_fput,
++	 * io-wq) must not stall the work that frees the rings it waits on.
++	 */
++	if (!(current->flags & PF_KTHREAD))
++		wait_event_killable(io_rings_dying_wq,
++				    atomic_read(&io_rings_dying) <
++					    READ_ONCE(sysctl_io_uring_max_dying));
+ 	return 0;
+ }
+ 
+-- 
+2.47.3
+

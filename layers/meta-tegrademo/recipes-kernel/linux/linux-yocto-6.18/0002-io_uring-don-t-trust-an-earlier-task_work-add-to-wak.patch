@@ -1,0 +1,57 @@
+From 14d76098fb3687228d8e9cc7464b85674e158d90 Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Thu, 15 Oct 2026 11:56:48 -0700
+Subject: [PATCH] io_uring: don't trust an earlier task_work add to wake on
+ PREEMPT_RT
+
+io_req_local_work_add() skips the wakeup when the request it queued
+behind was enough to satisfy the waiter, on the grounds that whoever
+added that one has woken, or will wake, the waiting task.  The add is a
+cmpxchg on work_llist followed some instructions later by
+wake_up_state(), with no lock held.  On PREEMPT_RT the earlier adder can
+be preempted between the two for as long as higher-priority work runs on
+its CPU, and the waiter, whatever its priority, sleeps until then.
+Nothing boosts the preempted adder, since it holds no lock.
+
+This bites IORING_OP_MSG_RING into a DEFER_TASKRUN ring in particular:
+the posts come from other tasks, of any priority, and a real-time
+sender's post is skipped whenever a lower-priority sender's is pending
+ahead of it.
+
+On PREEMPT_RT, wake the waiter regardless.  When the waiter is already
+awake the extra wake_up_state() finds it running and returns.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GpUwwinTvks4P7qHQAefc5
+
+Upstream-Status: Pending
+---
+ io_uring/io_uring.c | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/io_uring/io_uring.c b/io_uring/io_uring.c
+index a938ea85f1fb..f8c953bd15c1 100644
+--- a/io_uring/io_uring.c
++++ b/io_uring/io_uring.c
+@@ -1320,8 +1320,16 @@ static void io_req_local_work_add(struct io_kiocb *req, unsigned flags)
+ 	/* not enough or no one is waiting */
+ 	if (nr_tw < nr_wait)
+ 		return;
+-	/* the previous add has already woken it up */
+-	if (nr_tw_prev >= nr_wait)
++	/*
++	 * The previous add has already woken it up, or is about to.  On
++	 * PREEMPT_RT "about to" can be a long time: the previous adder can be
++	 * preempted between its cmpxchg above and its wake_up_state(), for as
++	 * long as anything of higher priority runs on its CPU, and a waiter of
++	 * any priority sleeps until it gets to run again.  Nothing boosts it,
++	 * since no lock is held.  Wake the waiter ourselves there; a waiter
++	 * that is already awake costs a try_to_wake_up() that finds it running.
++	 */
++	if (!IS_ENABLED(CONFIG_PREEMPT_RT) && nr_tw_prev >= nr_wait)
+ 		return;
+ 	wake_up_state(ctx->submitter_task, TASK_INTERRUPTIBLE);
+ }
+-- 
+2.47.3
+
