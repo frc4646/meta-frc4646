@@ -1,0 +1,118 @@
+From 64ac1b40aa43fb11e66ebad9dd57d5696e4b5ec4 Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Tue, 3 Nov 2026 20:16:27 -0800
+Subject: [PATCH] sctp: Only start partial delivery when the message can finish
+
+With SCTP_PARTIAL_DELIVERY_POINT set, the reassembly code starts partial
+delivery of the message at the head of the reassembly queue as soon as enough
+of it is contiguous, whatever is missing before it.  Two things go wrong when
+there is a gap below it.
+
+Partial chunks skip sctp_ulpq_order(), so an ordered message is handed over
+ahead of a lower SSN on its stream, which RFC 9260, Section 6.6 forbids.  The
+message with the lower SSN then waits behind it in the lobby or the lineup.
+
+Partial delivery also might not finish.  It only continues when a fragment
+arrives at or below the cumulative TSN.  A message without fragments that fills
+the gap doesn't look at the reassembly queue, so the fragments already there
+wait for an unrelated fragment to arrive.  If the gap was a fragmented message
+it can't complete during partial delivery, and partial delivery can't get past
+it at the head of the queue, so that stream stops.
+
+Start partial delivery only if the first TSN is at or below the cumulative TSN,
+as sctp_ulpq_partial_delivery() already requires, and an ordered message is the
+next on its stream.  The next fragment starts it once that's true.  If no more
+can be accepted, because the window is full, the existing call to
+sctp_ulpq_partial_delivery() on the receive path starts it instead.
+
+I-DATA isn't affected: it only starts partial delivery for the next MID.
+
+DRAFT: needs review and Signed-off-by.
+
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ net/sctp/ulpqueue.c | 38 +++++++++++++++++++++++++++++---------
+ 1 file changed, 29 insertions(+), 9 deletions(-)
+
+diff --git a/net/sctp/ulpqueue.c b/net/sctp/ulpqueue.c
+index 43fcb66..f5f3ea5 100644
+--- a/net/sctp/ulpqueue.c
++++ b/net/sctp/ulpqueue.c
+@@ -534,6 +534,28 @@ struct sctp_ulpevent *sctp_make_reassembled_event(struct net *net,
+ }
+ 
+ 
++/* Can partial delivery start with the message that starts at @first?
++ *
++ * Its chunks skip sctp_ulpq_order(), so an ordered message has to be the next
++ * one on its stream (RFC 9260, Section 6.6).
++ *
++ * All chunks up to it also have to be here.  Nothing looks at reasm when a
++ * message without fragments fills a gap, and the message at the head of reasm
++ * can't be delivered while another one is in partial delivery, so partial
++ * delivery could not continue.
++ */
++static bool sctp_ulpq_pd_can_start(struct sctp_ulpq *ulpq, struct sk_buff *first)
++{
++	struct sctp_association *asoc = ulpq->asoc;
++	struct sctp_ulpevent *event = sctp_skb2event(first);
++
++	if (!TSN_lte(event->tsn, sctp_tsnmap_get_ctsn(&asoc->peer.tsn_map)))
++		return false;
++
++	return (event->msg_flags & SCTP_DATA_UNORDERED) ||
++	       event->ssn == sctp_ssn_peek(&asoc->stream, in, event->stream);
++}
++
+ /* Helper function to check if an incoming chunk has filled up the last
+  * missing fragment in a SCTP datagram and return the corresponding event.
+  */
+@@ -625,6 +647,9 @@ sctp_ulpq_retrieve_reassembled_scan(struct sctp_ulpq *ulpq)
+ 		    atomic_read(&sctp_sk(asoc->base.sk)->pd_mode))
+ 			goto done;
+ 
++		if (!sctp_ulpq_pd_can_start(ulpq, pd_first))
++			goto done;
++
+ 		cevent = sctp_skb2event(pd_first);
+ 		pd_point = sctp_sk(asoc->base.sk)->pd_point;
+ 		if (pd_point && pd_point <= pd_len) {
+@@ -718,6 +743,8 @@ sctp_ulpq_retrieve_reassembled(struct sctp_ulpq *ulpq, struct sk_buff *new)
+ 	if (!sctp_sk(asoc->base.sk)->frag_interleave &&
+ 	    atomic_read(&sctp_sk(asoc->base.sk)->pd_mode))
+ 		return NULL;
++	if (!sctp_ulpq_pd_can_start(ulpq, ulpq->reasm_runs[0].first))
++		return NULL;
+ 	pd_point = sctp_sk(asoc->base.sk)->pd_point;
+ 	if (!pd_point || pd_point > ulpq->reasm_runs[0].len)
+ 		return NULL;
+@@ -1278,7 +1305,6 @@ void sctp_ulpq_partial_delivery(struct sctp_ulpq *ulpq,
+ 	struct sctp_ulpevent *event;
+ 	struct sctp_association *asoc;
+ 	struct sctp_sock *sp;
+-	__u32 ctsn;
+ 	struct sk_buff *skb;
+ 
+ 	asoc = ulpq->asoc;
+@@ -1290,15 +1316,9 @@ void sctp_ulpq_partial_delivery(struct sctp_ulpq *ulpq,
+ 	if (ulpq->pd_mode)
+ 		return;
+ 
+-	/* Data must be at or below the Cumulative TSN ACK Point to
+-	 * start partial delivery.
+-	 */
+ 	skb = skb_peek(&asoc->ulpq.reasm);
+-	if (skb != NULL) {
+-		ctsn = sctp_skb2event(skb)->tsn;
+-		if (!TSN_lte(ctsn, sctp_tsnmap_get_ctsn(&asoc->peer.tsn_map)))
+-			return;
+-	}
++	if (skb && !sctp_ulpq_pd_can_start(ulpq, skb))
++		return;
+ 
+ 	/* If the user enabled fragment interleave socket option,
+ 	 * multiple associations can enter partial delivery.
+-- 
+2.47.3
+

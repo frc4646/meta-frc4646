@@ -1,0 +1,268 @@
+From 2740dfa4c46d6e01c637c9c96cd874e82f13ace7 Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Mon, 2 Nov 2026 20:59:44 -0800
+Subject: [PATCH] sctp: Limit how much is queued below a socket
+
+DRAFT prototype of TX small queues; see the comment in outqueue.c.  Uses a
+module parameter so it can be tested without rebuilding struct net.  Needs
+review, a sysctl and Signed-off-by.
+
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ include/net/sctp/structs.h |  10 +++
+ net/sctp/offload.c         |  14 +++++
+ net/sctp/output.c          |   1 +
+ net/sctp/outqueue.c        | 125 ++++++++++++++++++++++++++++++++++++-
+ net/sctp/socket.c          |   6 ++
+ 5 files changed, 155 insertions(+), 1 deletion(-)
+
+diff --git a/include/net/sctp/structs.h b/include/net/sctp/structs.h
+index 2ae3902..01f19f9 100644
+--- a/include/net/sctp/structs.h
++++ b/include/net/sctp/structs.h
+@@ -237,6 +237,11 @@ struct sctp_sock {
+ 
+ 	struct list_head auto_asconf_list;
+ 	int do_auto_asconf;
++
++	/* Bytes handed to the layers below which haven't been freed yet. */
++	atomic_t tx_bytes;
++	unsigned long tsq_flags;
++	struct work_struct tsq_work;
+ };
+ 
+ #define sctp_sk(ptr) container_of_const(ptr, struct sctp_sock, inet.sk)
+@@ -1121,6 +1126,11 @@ void sctp_retransmit(struct sctp_outq *q, struct sctp_transport *transport,
+ 		     enum sctp_retransmit_reason reason);
+ void sctp_retransmit_mark(struct sctp_outq *, struct sctp_transport *, __u8);
+ void sctp_outq_uncork(struct sctp_outq *, gfp_t gfp);
++bool sctp_tsq_throttled(struct sock *sk);
++void sctp_tsq_charge(struct sk_buff *skb);
++void sctp_tsq_wfree(struct sk_buff *skb);
++void sctp_tsq_work(struct work_struct *work);
++void sctp_tsq_release_cb(struct sock *sk);
+ void sctp_prsctp_prune(struct sctp_association *asoc,
+ 		       struct sctp_sndrcvinfo *sinfo, int msg_len);
+ void sctp_generate_fwdtsn(struct sctp_outq *q, __u32 sack_ctsn);
+diff --git a/net/sctp/offload.c b/net/sctp/offload.c
+index e6f863c..a6113bb 100644
+--- a/net/sctp/offload.c
++++ b/net/sctp/offload.c
+@@ -73,6 +73,20 @@ static struct sk_buff *sctp_gso_segment(struct sk_buff *skb,
+ 	if (IS_ERR(segs))
+ 		goto out;
+ 
++	/* skb_segment() only hands the socket's accounting over to the last
++	 * segment for sock_wfree.  Do the same for small queues, otherwise the
++	 * bytes stop counting as queued here rather than at TX completion.
++	 */
++	if (skb->destructor == sctp_tsq_wfree) {
++		struct sk_buff *tail = segs;
++
++		while (tail->next)
++			tail = tail->next;
++		swap(tail->truesize, skb->truesize);
++		swap(tail->destructor, skb->destructor);
++		swap(tail->sk, skb->sk);
++	}
++
+ 	/* All that is left is update SCTP CRC if necessary */
+ 	if (!(features & NETIF_F_SCTP_CRC)) {
+ 		for (skb = segs; skb; skb = skb->next) {
+diff --git a/net/sctp/output.c b/net/sctp/output.c
+index 23e9630..e52c41d 100644
+--- a/net/sctp/output.c
++++ b/net/sctp/output.c
+@@ -650,6 +650,7 @@ int sctp_packet_transmit(struct sctp_packet *packet, gfp_t gfp)
+ 	/* neighbour should be confirmed on successful transmission or
+ 	 * positive error
+ 	 */
++	sctp_tsq_charge(head);
+ 	if (tp->af_specific->sctp_xmit(head, tp) >= 0 &&
+ 	    tp->dst_pending_confirm)
+ 		tp->dst_pending_confirm = 0;
+diff --git a/net/sctp/outqueue.c b/net/sctp/outqueue.c
+index 3a02fbf..d2233b7 100644
+--- a/net/sctp/outqueue.c
++++ b/net/sctp/outqueue.c
+@@ -27,6 +27,8 @@
+ #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+ 
+ #include <linux/types.h>
++#include <linux/moduleparam.h>
++#include <linux/workqueue.h>
+ #include <linux/list.h>   /* For struct list_head */
+ #include <linux/socket.h>
+ #include <linux/ip.h>
+@@ -1083,7 +1085,8 @@ static void sctp_outq_flush_data(struct sctp_flush_ctx *ctx,
+ 		sctp_transport_burst_limited(ctx->transport);
+ 
+ 	/* Finally, transmit new packets.  */
+-	while ((chunk = sctp_outq_dequeue_data(ctx->q)) != NULL) {
++	while (!sctp_tsq_throttled(ctx->asoc->base.sk) &&
++	       (chunk = sctp_outq_dequeue_data(ctx->q)) != NULL) {
+ 		__u32 sid = ntohs(chunk->subh.data_hdr->stream);
+ 		__u8 stream_state = SCTP_SO(&ctx->asoc->stream, sid)->state;
+ 
+@@ -1196,6 +1199,126 @@ static void sctp_outq_flush_transports(struct sctp_flush_ctx *ctx)
+ 	}
+ }
+ 
++/* TX small queues.
++ *
++ * SCTP only finds out how much is queued below it through the RTT, so without
++ * loss it will queue up to a whole cwnd or a large part of a message in the
++ * qdisc and device.  It can't take anything back from there, which means stream
++ * priorities and fresh messages wait behind all of it.  Limit how much is queued
++ * below us, and leave the rest in the stream scheduler.  The limit is on
++ * skb->truesize, like TCP's.
++ */
++enum {
++	SCTP_TSQ_THROTTLED,
++	SCTP_TSQ_QUEUED,
++	SCTP_TSQ_DEFERRED,
++};
++
++/* TODO(upstreaming): This wants to be net.sctp.limit_output_bytes.  It's a
++ * module parameter to be able to test without rebuilding struct net.
++ */
++static int sctp_limit_output_bytes;
++module_param_named(limit_output_bytes, sctp_limit_output_bytes, int, 0644);
++MODULE_PARM_DESC(limit_output_bytes,
++		 "Max bytes queued below a socket before leaving new data in "
++		 "the stream scheduler, by skb->truesize.  0 for no limit.");
++
++bool sctp_tsq_throttled(struct sock *sk)
++{
++	struct sctp_sock *sp = sctp_sk(sk);
++	int limit = READ_ONCE(sctp_limit_output_bytes);
++
++	if (limit <= 0 || atomic_read(&sp->tx_bytes) <= limit)
++		return false;
++
++	/* The wakeup has to work after close, when the only thing keeping the
++	 * endpoint around might be this.
++	 */
++	if (!test_and_set_bit(SCTP_TSQ_THROTTLED, &sp->tsq_flags))
++		sctp_endpoint_hold(sp->ep);
++	/* TX completion may have happened before we set the bit. */
++	smp_mb__after_atomic();
++	if (atomic_read(&sp->tx_bytes) > limit)
++		return true;
++
++	if (test_and_clear_bit(SCTP_TSQ_THROTTLED, &sp->tsq_flags))
++		sctp_endpoint_put(sp->ep);
++	return false;
++}
++
++void sctp_tsq_wfree(struct sk_buff *skb)
++{
++	struct sock *sk = skb->sk;
++	struct sctp_sock *sp = sctp_sk(sk);
++	int bytes = atomic_sub_return(skb->truesize, &sp->tx_bytes);
++
++	/* Wait until half of it is gone, to not wake up for every packet. */
++	if (test_bit(SCTP_TSQ_THROTTLED, &sp->tsq_flags) &&
++	    bytes <= max(READ_ONCE(sctp_limit_output_bytes), 0) / 2 &&
++	    !test_and_set_bit(SCTP_TSQ_QUEUED, &sp->tsq_flags)) {
++		/* The skb only keeps the memory around, and the socket might
++		 * be going away.
++		 */
++		if (refcount_inc_not_zero(&sk->sk_refcnt))
++			queue_work(system_bh_highpri_wq, &sp->tsq_work);
++		else
++			clear_bit(SCTP_TSQ_QUEUED, &sp->tsq_flags);
++	}
++
++	sock_wfree(skb);
++}
++
++/* Called with skb's size final, right before sending it. */
++void sctp_tsq_charge(struct sk_buff *skb)
++{
++	if (READ_ONCE(sctp_limit_output_bytes) <= 0)
++		return;
++
++	atomic_add(skb->truesize, &sctp_sk(skb->sk)->tx_bytes);
++	skb->destructor = sctp_tsq_wfree;
++}
++
++static void sctp_tsq_write(struct sock *sk)
++{
++	struct sctp_endpoint *ep = sctp_sk(sk)->ep;
++	struct sctp_association *asoc;
++
++	/* Whoever clears the bit owns the reference which keeps ep alive. */
++	if (!test_and_clear_bit(SCTP_TSQ_THROTTLED, &sctp_sk(sk)->tsq_flags))
++		return;
++
++	/* The limit is per socket, and the first association to get a turn can
++	 * use all of it.  Take turns going first.
++	 */
++	list_rotate_left(&ep->asocs);
++	list_for_each_entry(asoc, &ep->asocs, asocs)
++		sctp_outq_uncork(&asoc->outqueue, GFP_ATOMIC);
++
++	sctp_endpoint_put(ep);
++}
++
++void sctp_tsq_work(struct work_struct *work)
++{
++	struct sctp_sock *sp = container_of(work, struct sctp_sock, tsq_work);
++	struct sock *sk = &sp->inet.sk;
++
++	clear_bit(SCTP_TSQ_QUEUED, &sp->tsq_flags);
++
++	bh_lock_sock(sk);
++	if (sock_owned_by_user(sk))
++		set_bit(SCTP_TSQ_DEFERRED, &sp->tsq_flags);
++	else
++		sctp_tsq_write(sk);
++	bh_unlock_sock(sk);
++	sock_put(sk);
++}
++
++void sctp_tsq_release_cb(struct sock *sk)
++{
++	if (test_and_clear_bit(SCTP_TSQ_DEFERRED, &sctp_sk(sk)->tsq_flags))
++		sctp_tsq_write(sk);
++}
++
+ /* Try to flush an outqueue.
+  *
+  * Description: Send everything in q which we legally can, subject to
+diff --git a/net/sctp/socket.c b/net/sctp/socket.c
+index c763eb3..7aaffc6 100644
+--- a/net/sctp/socket.c
++++ b/net/sctp/socket.c
+@@ -5077,6 +5077,10 @@ static int sctp_init_sock(struct sock *sk)
+ 	sp->frag_interleave = 0;
+ 	sp->probe_interval = net->sctp.probe_interval;
+ 
++	atomic_set(&sp->tx_bytes, 0);
++	sp->tsq_flags = 0;
++	INIT_WORK(&sp->tsq_work, sctp_tsq_work);
++
+ 	/* Create a per socket endpoint structure.  Even if we
+ 	 * change the data structure relationships, this may still
+ 	 * be useful for storing pre-connect address information.
+@@ -9673,6 +9677,7 @@ struct proto sctp_prot = {
+ 	.bind        =	sctp_bind,
+ 	.bind_add    =  sctp_bind_add,
+ 	.backlog_rcv =	sctp_backlog_rcv,
++	.release_cb  =	sctp_tsq_release_cb,
+ 	.hash        =	sctp_hash,
+ 	.unhash      =	sctp_unhash,
+ 	.no_autobind =	true,
+@@ -9728,6 +9733,7 @@ struct proto sctpv6_prot = {
+ 	.bind		= sctp_bind,
+ 	.bind_add	= sctp_bind_add,
+ 	.backlog_rcv	= sctp_backlog_rcv,
++	.release_cb	= sctp_tsq_release_cb,
+ 	.hash		= sctp_hash,
+ 	.unhash		= sctp_unhash,
+ 	.no_autobind	= true,
+-- 
+2.47.3
+

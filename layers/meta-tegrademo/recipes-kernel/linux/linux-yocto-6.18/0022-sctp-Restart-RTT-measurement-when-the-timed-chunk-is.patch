@@ -1,0 +1,89 @@
+From 8df10601b5485923629792f8684551a0300531d6 Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Mon, 9 Nov 2026 17:50:21 -0800
+Subject: [PATCH] sctp: Restart RTT measurement when the timed chunk is
+ abandoned
+
+A transport times one DATA chunk at a time for RTT: rto_pending says a
+measurement is running and the chunk carries rtt_in_progress.  The
+measurement ends when that chunk is acked, or is cleared when the chunk is
+retransmitted.  If PR-SCTP abandons the chunk instead, neither happens:
+it's never acked, so rto_pending stays set and no later chunk is timed.
+
+RTT sampling from data then stops on that transport, so RTO stays where it
+was, including after a T3-rtx doubled it.  Heartbeats are deferred while
+data is flowing, so on a busy association nothing clears it.  RFC 9260
+6.3.1 C4 requires a new measurement each round trip while data is in
+flight.
+
+Clear the measurement wherever a sent chunk is abandoned, the same way the
+retransmit path does.
+
+With 1% loss, a 5 kHz reliable stream beside abandoned TTL traffic on an
+Orin got stuck with a backed-off RTO in 11 of 18 runs before this and 0 of
+28 after.
+
+DRAFT: needs review, KASAN testing and Signed-off-by.
+
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ net/sctp/outqueue.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/net/sctp/outqueue.c b/net/sctp/outqueue.c
+index d2233b7..0de75d3 100644
+--- a/net/sctp/outqueue.c
++++ b/net/sctp/outqueue.c
+@@ -341,6 +341,16 @@ static void sctp_insert_list(struct list_head *head, struct list_head *new)
+ 		list_add_tail(new, head);
+ }
+ 
++/* An abandoned chunk never gets acked, so it can't finish an RTT measurement. */
++static void sctp_chunk_stop_rtt(struct sctp_chunk *chunk)
++{
++	if (chunk->rtt_in_progress) {
++		chunk->rtt_in_progress = 0;
++		if (chunk->transport)
++			chunk->transport->rto_pending = 0;
++	}
++}
++
+ static int sctp_prsctp_prune_sent(struct sctp_association *asoc,
+ 				  struct sctp_sndrcvinfo *sinfo,
+ 				  struct list_head *queue, int msg_len)
+@@ -356,6 +366,7 @@ static int sctp_prsctp_prune_sent(struct sctp_association *asoc,
+ 			continue;
+ 
+ 		chk->msg->abandoned = 1;
++		sctp_chunk_stop_rtt(chk);
+ 		list_del_init(&chk->transmitted_list);
+ 		sctp_insert_list(&asoc->outqueue.abandoned,
+ 				 &chk->transmitted_list);
+@@ -463,6 +474,7 @@ void sctp_retransmit_mark(struct sctp_outq *q,
+ 
+ 		/* If the chunk is abandoned, move it to abandoned list. */
+ 		if (sctp_chunk_abandoned(chunk)) {
++			sctp_chunk_stop_rtt(chunk);
+ 			list_del_init(lchunk);
+ 			sctp_insert_list(&q->abandoned, lchunk);
+ 
+@@ -638,6 +650,7 @@ static int __sctp_outq_flush_rtx(struct sctp_outq *q, struct sctp_packet *pkt,
+ 	list_for_each_entry_safe(chunk, chunk1, lqueue, transmitted_list) {
+ 		/* If the chunk is abandoned, move it to abandoned list. */
+ 		if (sctp_chunk_abandoned(chunk)) {
++			sctp_chunk_stop_rtt(chunk);
+ 			list_del_init(&chunk->transmitted_list);
+ 			sctp_insert_list(&q->abandoned,
+ 					 &chunk->transmitted_list);
+@@ -1610,6 +1623,7 @@ static void sctp_check_transmitted(struct sctp_outq *q,
+ 				    transmitted_list);
+ 
+ 		if (sctp_chunk_abandoned(tchunk)) {
++			sctp_chunk_stop_rtt(tchunk);
+ 			/* Move the chunk to abandoned list. */
+ 			sctp_insert_list(&q->abandoned, lchunk);
+ 
+-- 
+2.47.3
+

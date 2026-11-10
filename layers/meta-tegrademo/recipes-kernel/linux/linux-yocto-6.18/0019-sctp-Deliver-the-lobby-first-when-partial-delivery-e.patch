@@ -1,0 +1,54 @@
+From 01371e6666f547da65f466ea1b90a71559ec2c8b Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Tue, 3 Nov 2026 20:48:37 -0800
+Subject: [PATCH] sctp: Deliver the lobby first when partial delivery ends
+
+Messages on a stream with no partial delivery wait in the lobby during partial
+delivery, after they've gone through ordering.  Complete messages wait in the
+reassembly queue until it ends.
+
+When it ends, sctp_ulpq_clear_pd() drains the reassembly queue before it empties
+the lobby.  At that point ulpq->pd_mode is clear and sp->pd_mode is not, so with
+fragment interleave on, sctp_ulpq_tail_event() puts the drained messages directly
+on the receive queue.  They overtake the lobby: later SSNs get delivered before
+earlier ones on the same stream, which RFC 9260, Section 6.6 forbids.
+
+Empty the lobby first.  Everything in it arrived before what the drain delivers,
+and sp->pd_mode is then clear for the drain, whose messages go to the receive
+queue for any fragment interleave setting.  If the drain starts partial delivery
+again, it sets sp->pd_mode itself.
+
+DRAFT: needs review and Signed-off-by.
+
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ net/sctp/ulpqueue.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/net/sctp/ulpqueue.c b/net/sctp/ulpqueue.c
+index f5f3ea5..9695d1d 100644
+--- a/net/sctp/ulpqueue.c
++++ b/net/sctp/ulpqueue.c
+@@ -318,9 +318,17 @@ static void sctp_ulpq_pd_track(struct sctp_ulpq *ulpq, struct sk_buff *first,
+ /* Clear the pd_mode and restart any pending messages waiting for delivery. */
+ static int sctp_ulpq_clear_pd(struct sctp_ulpq *ulpq)
+ {
++	int ret;
++
+ 	ulpq->pd_mode = 0;
++
++	/* What's in the lobby already went through ordering, so it goes first.
++	 * With fragment interleave on, the drain goes to the receive queue
++	 * directly.
++	 */
++	ret = sctp_clear_pd(ulpq->asoc->base.sk, ulpq->asoc);
+ 	sctp_ulpq_reasm_drain(ulpq);
+-	return sctp_clear_pd(ulpq->asoc->base.sk, ulpq->asoc);
++	return ret;
+ }
+ 
+ int sctp_ulpq_tail_event(struct sctp_ulpq *ulpq, struct sk_buff_head *skb_list)
+-- 
+2.47.3
+

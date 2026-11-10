@@ -1,0 +1,134 @@
+From 824bafe40048db8714eb6518ee9690fa6510a1fa Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Tue, 3 Nov 2026 17:33:08 -0800
+Subject: [PATCH] sctp: Only abort the partial delivery a FORWARD TSN skips
+
+sctp_report_fwdtsn() aborts partial delivery unconditionally, even when the
+message being handed over is live and the FORWARD TSN is about an earlier
+one, as a retransmitted FORWARD TSN often is.  The application loses a
+reliable message, the rest of its fragments are stranded in the reassembly
+queue, and the stream stalls until the association dies.
+
+Track which message partial delivery is on and the TSN of its next fragment.
+Abort if the cumulative TSN covers that fragment or if the FORWARD TSN names
+the message.  DATA senders finish one message before starting the next, so
+nothing else can affect it.
+
+DRAFT: needs review and Signed-off-by.
+
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ include/net/sctp/ulpqueue.h  |  5 +++++
+ net/sctp/stream_interleave.c |  9 +++++++--
+ net/sctp/ulpqueue.c          | 23 +++++++++++++++++++++++
+ 3 files changed, 35 insertions(+), 2 deletions(-)
+
+diff --git a/include/net/sctp/ulpqueue.h b/include/net/sctp/ulpqueue.h
+index fb60beb..e1abed8 100644
+--- a/include/net/sctp/ulpqueue.h
++++ b/include/net/sctp/ulpqueue.h
+@@ -39,6 +39,11 @@ struct sctp_ulpq_reasm_run {
+ /* A structure to carry information to the ULP (e.g. Sockets API) */
+ struct sctp_ulpq {
+ 	char pd_mode;
++	/* The message in partial delivery, and the TSN of its next fragment. */
++	__u32 pd_next_tsn;
++	__u16 pd_sid;
++	__u16 pd_ssn;
++	bool pd_unordered;
+ 	struct sctp_association *asoc;
+ 	struct sk_buff_head reasm;
+ 	struct sk_buff_head reasm_uo;
+diff --git a/net/sctp/stream_interleave.c b/net/sctp/stream_interleave.c
+index 2a52cbc..385d0a3 100644
+--- a/net/sctp/stream_interleave.c
++++ b/net/sctp/stream_interleave.c
+@@ -1254,8 +1254,13 @@ static void sctp_report_fwdtsn(struct sctp_ulpq *ulpq, __u32 ftsn)
+ 	sctp_tsnmap_skip(&ulpq->asoc->peer.tsn_map, ftsn);
+ 	/* purge the fragmentation queue */
+ 	sctp_ulpq_reasm_flushtsn(ulpq, ftsn);
+-	/* Abort any in progress partial delivery. */
+-	sctp_ulpq_abort_pd(ulpq, GFP_ATOMIC);
++	/* Abort partial delivery if this skips the rest of that message.  If
++	 * its next fragment is above ftsn, handle_ftsn checks if it got named.
++	 * Otherwise it isn't affected: the sender finishes one message before
++	 * starting the next, so what's skipped came before it.
++	 */
++	if (TSN_lte(ulpq->pd_next_tsn, ftsn))
++		sctp_ulpq_abort_pd(ulpq, GFP_ATOMIC);
+ }
+ 
+ static void sctp_report_iftsn(struct sctp_ulpq *ulpq, __u32 ftsn)
+diff --git a/net/sctp/ulpqueue.c b/net/sctp/ulpqueue.c
+index b9ece47..43fcb66 100644
+--- a/net/sctp/ulpqueue.c
++++ b/net/sctp/ulpqueue.c
+@@ -303,6 +303,18 @@ static void sctp_ulpq_set_pd(struct sctp_ulpq *ulpq)
+ 	ulpq->pd_mode = 1;
+ }
+ 
++/* Remember which message fragments are about to be handed over for. */
++static void sctp_ulpq_pd_track(struct sctp_ulpq *ulpq, struct sk_buff *first,
++			       struct sk_buff *last)
++{
++	struct sctp_ulpevent *event = sctp_skb2event(first);
++
++	ulpq->pd_next_tsn = sctp_skb2event(last)->tsn + 1;
++	ulpq->pd_sid = event->stream;
++	ulpq->pd_ssn = event->ssn;
++	ulpq->pd_unordered = !!(event->msg_flags & SCTP_DATA_UNORDERED);
++}
++
+ /* Clear the pd_mode and restart any pending messages waiting for delivery. */
+ static int sctp_ulpq_clear_pd(struct sctp_ulpq *ulpq)
+ {
+@@ -616,6 +628,7 @@ sctp_ulpq_retrieve_reassembled_scan(struct sctp_ulpq *ulpq)
+ 		cevent = sctp_skb2event(pd_first);
+ 		pd_point = sctp_sk(asoc->base.sk)->pd_point;
+ 		if (pd_point && pd_point <= pd_len) {
++			sctp_ulpq_pd_track(ulpq, pd_first, pd_last);
+ 			retval = sctp_make_reassembled_event(asoc->base.net,
+ 							     &ulpq->reasm,
+ 							     pd_first, pd_last);
+@@ -708,6 +721,7 @@ sctp_ulpq_retrieve_reassembled(struct sctp_ulpq *ulpq, struct sk_buff *new)
+ 	pd_point = sctp_sk(asoc->base.sk)->pd_point;
+ 	if (!pd_point || pd_point > ulpq->reasm_runs[0].len)
+ 		return NULL;
++	sctp_ulpq_pd_track(ulpq, ulpq->reasm_runs[0].first, ulpq->reasm_runs[0].last);
+ 	retval = sctp_make_reassembled_event(asoc->base.net, &ulpq->reasm,
+ 					     ulpq->reasm_runs[0].first,
+ 					     ulpq->reasm_runs[0].last);
+@@ -776,6 +790,7 @@ static struct sctp_ulpevent *sctp_ulpq_retrieve_partial(struct sctp_ulpq *ulpq)
+ 	 * further.
+ 	 */
+ done:
++	sctp_ulpq_pd_track(ulpq, first_frag, last_frag);
+ 	retval = sctp_make_reassembled_event(ulpq->asoc->base.net, &ulpq->reasm,
+ 					     first_frag, last_frag);
+ 	sctp_ulpq_reasm_runs_invalidate(ulpq);
+@@ -884,6 +899,7 @@ static struct sctp_ulpevent *sctp_ulpq_retrieve_first(struct sctp_ulpq *ulpq)
+ 	 * further.
+ 	 */
+ done:
++	sctp_ulpq_pd_track(ulpq, first_frag, last_frag);
+ 	retval = sctp_make_reassembled_event(ulpq->asoc->base.net, &ulpq->reasm,
+ 					     first_frag, last_frag);
+ 	sctp_ulpq_reasm_runs_invalidate(ulpq);
+@@ -1175,6 +1191,13 @@ void sctp_ulpq_skip(struct sctp_ulpq *ulpq, __u16 sid, __u16 ssn)
+ 	if (SSN_lt(ssn, sctp_ssn_peek(stream, in, sid)))
+ 		return;
+ 
++	/* The rest of the message being handed over might be on its way still,
++	 * so report_ftsn can't tell.
++	 */
++	if (ulpq->pd_mode && !ulpq->pd_unordered && ulpq->pd_sid == sid &&
++	    !SSN_lt(ssn, ulpq->pd_ssn))
++		sctp_ulpq_abort_pd(ulpq, GFP_ATOMIC);
++
+ 	/* Mark that we are no longer expecting this SSN or lower. */
+ 	sctp_ssn_skip(stream, in, sid, ssn);
+ 	sctp_stream_in(stream, sid)->skip_mid = ssn;
+-- 
+2.47.3
+

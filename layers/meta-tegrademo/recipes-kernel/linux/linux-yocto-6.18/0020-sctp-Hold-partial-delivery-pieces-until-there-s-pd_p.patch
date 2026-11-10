@@ -1,0 +1,180 @@
+From ac4668c91fe58dcde0c8de74310457b2d2d095ce Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Wed, 4 Nov 2026 02:01:17 -0800
+Subject: [PATCH] sctp: Hold partial delivery pieces until there's pd_point
+ more of them
+
+Once partial delivery has started, each fragment gets handed to the user
+as it arrives.  A reader which keeps up then does a recvmsg per fragment,
+which is about 700 syscalls for a 1 MB message, with the socket lock
+bouncing between the reader and the softirq.
+
+SCTP_PARTIAL_DELIVERY_POINT is the user telling us how much is worth
+waking up for.  Use that for the pieces after the first one too.  The end
+of a message doesn't wait, whole messages on other streams aren't
+affected, and nothing changes with it unset.
+
+Stop holding at a quarter of the receive buffer, or when the window gets
+that low, so what's held can't starve the fragment which would release it.
+
+DRAFT: tests are in progress.
+
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ include/net/sctp/ulpqueue.h  |  3 +++
+ net/sctp/stream_interleave.c | 16 ++++++++++------
+ net/sctp/ulpqueue.c          | 26 ++++++++++++++++++++++++++
+ 3 files changed, 39 insertions(+), 6 deletions(-)
+
+diff --git a/include/net/sctp/ulpqueue.h b/include/net/sctp/ulpqueue.h
+index e1abed8..37344b5 100644
+--- a/include/net/sctp/ulpqueue.h
++++ b/include/net/sctp/ulpqueue.h
+@@ -84,6 +84,9 @@ void sctp_ulpq_partial_delivery(struct sctp_ulpq *, gfp_t);
+ /* Abort the partial delivery. */
+ void sctp_ulpq_abort_pd(struct sctp_ulpq *, gfp_t);
+ 
++/* Should more of a message being partially delivered wait for now? */
++bool sctp_ulpq_pd_hold(const struct sctp_ulpq *ulpq, u32 len);
++
+ /* Clear the partial data delivery condition on this socket. */
+ int sctp_clear_pd(struct sock *sk, struct sctp_association *asoc);
+ 
+diff --git a/net/sctp/stream_interleave.c b/net/sctp/stream_interleave.c
+index 385d0a3..2ee531a 100644
+--- a/net/sctp/stream_interleave.c
++++ b/net/sctp/stream_interleave.c
+@@ -238,6 +238,7 @@ static struct sctp_ulpevent *sctp_intl_retrieve_partial(
+ 	struct sk_buff *pos;
+ 	__u32 next_fsn = 0;
+ 	int is_last = 0;
++	u32 len = 0;
+ 
+ 	sin = sctp_stream_in(&ulpq->asoc->stream, event->stream);
+ 
+@@ -267,6 +268,8 @@ static struct sctp_ulpevent *sctp_intl_retrieve_partial(
+ 			} else {
+ 				goto out;
+ 			}
++			if (first_frag)
++				len += pos->len;
+ 			break;
+ 		case SCTP_DATA_LAST_FRAG:
+ 			if (!first_frag) {
+@@ -288,7 +291,7 @@ static struct sctp_ulpevent *sctp_intl_retrieve_partial(
+ 	}
+ 
+ out:
+-	if (!first_frag)
++	if (!first_frag || (!is_last && sctp_ulpq_pd_hold(ulpq, len)))
+ 		return NULL;
+ 
+ 	retval = sctp_make_reassembled_event(ulpq->asoc->base.net, &ulpq->reasm,
+@@ -409,8 +412,7 @@ static struct sctp_ulpevent *sctp_intl_reasm(struct sctp_ulpq *ulpq,
+ 	sctp_intl_store_reasm(ulpq, event);
+ 
+ 	sin = sctp_stream_in(&ulpq->asoc->stream, event->stream);
+-	if (sin->pd_mode && event->mid == sin->mid &&
+-	    event->fsn == sin->fsn)
++	if (sin->pd_mode && event->mid == sin->mid)
+ 		retval = sctp_intl_retrieve_partial(ulpq, event);
+ 
+ 	if (!retval)
+@@ -616,6 +618,7 @@ static struct sctp_ulpevent *sctp_intl_retrieve_partial_uo(
+ 	struct sk_buff *pos;
+ 	__u32 next_fsn = 0;
+ 	int is_last = 0;
++	u32 len = 0;
+ 
+ 	sin = sctp_stream_in(&ulpq->asoc->stream, event->stream);
+ 
+@@ -648,6 +651,8 @@ static struct sctp_ulpevent *sctp_intl_retrieve_partial_uo(
+ 			} else {
+ 				goto out;
+ 			}
++			if (first_frag)
++				len += pos->len;
+ 			break;
+ 		case SCTP_DATA_LAST_FRAG:
+ 			if (!first_frag) {
+@@ -669,7 +674,7 @@ static struct sctp_ulpevent *sctp_intl_retrieve_partial_uo(
+ 	}
+ 
+ out:
+-	if (!first_frag)
++	if (!first_frag || (!is_last && sctp_ulpq_pd_hold(ulpq, len)))
+ 		return NULL;
+ 
+ 	retval = sctp_make_reassembled_event(ulpq->asoc->base.net,
+@@ -792,8 +797,7 @@ static struct sctp_ulpevent *sctp_intl_reasm_uo(struct sctp_ulpq *ulpq,
+ 	sctp_intl_store_reasm_uo(ulpq, event);
+ 
+ 	sin = sctp_stream_in(&ulpq->asoc->stream, event->stream);
+-	if (sin->pd_mode_uo && event->mid == sin->mid_uo &&
+-	    event->fsn == sin->fsn_uo)
++	if (sin->pd_mode_uo && event->mid == sin->mid_uo)
+ 		retval = sctp_intl_retrieve_partial_uo(ulpq, event);
+ 
+ 	if (!retval)
+diff --git a/net/sctp/ulpqueue.c b/net/sctp/ulpqueue.c
+index 9695d1d..7588ace 100644
+--- a/net/sctp/ulpqueue.c
++++ b/net/sctp/ulpqueue.c
+@@ -766,6 +766,27 @@ sctp_ulpq_retrieve_reassembled(struct sctp_ulpq *ulpq, struct sk_buff *new)
+ 	return retval;
+ }
+ 
++/* Once partial delivery has started, handing over each fragment as it arrives
++ * means a syscall per fragment, with the socket lock bouncing between the reader
++ * and the softirq.  The user told us with SCTP_PARTIAL_DELIVERY_POINT how much
++ * is worth waking up for, so wait for that much more before the next piece.  The
++ * end of the message never waits.
++ *
++ * What's held counts against the window just like what's waiting to be read,
++ * and the next fragment can only come in if the window allows it, so stop
++ * holding before running out of it.  Whatever is held goes up with the next
++ * fragment of that message, including a window probe.
++ */
++bool sctp_ulpq_pd_hold(const struct sctp_ulpq *ulpq, u32 len)
++{
++	const struct sctp_association *asoc = ulpq->asoc;
++	const struct sock *sk = asoc->base.sk;
++	u32 limit = min_t(u32, sctp_sk(sk)->pd_point,
++			  READ_ONCE(sk->sk_rcvbuf) >> 2);
++
++	return len < limit && asoc->rwnd > limit;
++}
++
+ /* Retrieve the next set of fragments of a partial message. */
+ static struct sctp_ulpevent *sctp_ulpq_retrieve_partial(struct sctp_ulpq *ulpq)
+ {
+@@ -774,6 +795,7 @@ static struct sctp_ulpevent *sctp_ulpq_retrieve_partial(struct sctp_ulpq *ulpq)
+ 	__u32 ctsn, next_tsn;
+ 	int is_last;
+ 	struct sctp_ulpevent *retval;
++	u32 len = 0;
+ 
+ 	/* The chunks are held in the reasm queue sorted by TSN.
+ 	 * Walk through the queue sequentially and look for the first
+@@ -807,6 +829,7 @@ static struct sctp_ulpevent *sctp_ulpq_retrieve_partial(struct sctp_ulpq *ulpq)
+ 				last_frag = pos;
+ 			} else
+ 				goto done;
++			len += pos->len;
+ 			break;
+ 		case SCTP_DATA_LAST_FRAG:
+ 			if (!first_frag)
+@@ -825,6 +848,9 @@ static struct sctp_ulpevent *sctp_ulpq_retrieve_partial(struct sctp_ulpq *ulpq)
+ 	 * further.
+ 	 */
+ done:
++	if (!is_last && sctp_ulpq_pd_hold(ulpq, len))
++		return NULL;
++
+ 	sctp_ulpq_pd_track(ulpq, first_frag, last_frag);
+ 	retval = sctp_make_reassembled_event(ulpq->asoc->base.net, &ulpq->reasm,
+ 					     first_frag, last_frag);
+-- 
+2.47.3
+

@@ -1,0 +1,157 @@
+From 8405e7fcf4eaedbdbfbecbf0c597ea9d11097a6f Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Mon, 2 Nov 2026 23:27:50 -0800
+Subject: [PATCH] sctp: Only discard the skipped messages on an I-FORWARD-TSN
+
+DRAFT.  An I-FORWARD-TSN names the messages it skips, but the receiver
+acted on its cumulative TSN instead:
+
+ - It freed every fragment in the reassembly queues at or below that
+   TSN.  With interleaving, those can belong to a live message on
+   another stream, which then never completes.
+
+ - When the cumulative TSN matched the highest TSN seen, it aborted
+   partial delivery on every stream and skipped their messages.  The
+   next fragment of a live message then failed sctp_validate_idata() and
+   the association was aborted with a protocol violation.
+
+Both are correct for DATA, where one message occupies a contiguous range
+of TSNs, but not for I-DATA.  Discard by the stream and MID named in the
+chunk.  A stream reset really does cover all data, so have those two
+callers abort partial delivery themselves.
+
+An aborted unordered message was also only noticed if its MID was below
+the skipped one, and the notification named the skipped MID rather than
+the aborted one.
+
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ net/sctp/stream.c            |  2 ++
+ net/sctp/stream_interleave.c | 65 +++++++++++++++++-------------------
+ 2 files changed, 33 insertions(+), 34 deletions(-)
+
+diff --git a/net/sctp/stream.c b/net/sctp/stream.c
+index 39b8f5e..a7faf3e 100644
+--- a/net/sctp/stream.c
++++ b/net/sctp/stream.c
+@@ -729,6 +729,7 @@ struct sctp_chunk *sctp_process_strreset_tsnreq(
+ 	 */
+ 	max_tsn_seen = sctp_tsnmap_get_max_tsn_seen(&asoc->peer.tsn_map);
+ 	asoc->stream.si->report_ftsn(&asoc->ulpq, max_tsn_seen);
++	asoc->stream.si->abort_pd(&asoc->ulpq, GFP_ATOMIC);
+ 
+ 	/* G1: Compute an appropriate value for the Receiver's Next TSN -- the
+ 	 *     TSN that the peer should use to send the next DATA chunk.  The
+@@ -1006,6 +1007,7 @@ struct sctp_chunk *sctp_process_strreset_resp(
+ 			LIST_HEAD(temp);
+ 
+ 			asoc->stream.si->report_ftsn(&asoc->ulpq, mtsn);
++			asoc->stream.si->abort_pd(&asoc->ulpq, GFP_ATOMIC);
+ 
+ 			sctp_tsnmap_init(&asoc->peer.tsn_map,
+ 					 SCTP_TSN_MAP_INITIAL,
+diff --git a/net/sctp/stream_interleave.c b/net/sctp/stream_interleave.c
+index cbf8c55..292328f 100644
+--- a/net/sctp/stream_interleave.c
++++ b/net/sctp/stream_interleave.c
+@@ -1208,40 +1208,14 @@ static void sctp_report_fwdtsn(struct sctp_ulpq *ulpq, __u32 ftsn)
+ 	sctp_ulpq_abort_pd(ulpq, GFP_ATOMIC);
+ }
+ 
+-static void sctp_intl_reasm_flushtsn(struct sctp_ulpq *ulpq, __u32 ftsn)
+-{
+-	struct sk_buff *pos, *tmp;
+-
+-	skb_queue_walk_safe(&ulpq->reasm, pos, tmp) {
+-		struct sctp_ulpevent *event = sctp_skb2event(pos);
+-		__u32 tsn = event->tsn;
+-
+-		if (TSN_lte(tsn, ftsn)) {
+-			__skb_unlink(pos, &ulpq->reasm);
+-			sctp_ulpevent_free(event);
+-		}
+-	}
+-
+-	skb_queue_walk_safe(&ulpq->reasm_uo, pos, tmp) {
+-		struct sctp_ulpevent *event = sctp_skb2event(pos);
+-		__u32 tsn = event->tsn;
+-
+-		if (TSN_lte(tsn, ftsn)) {
+-			__skb_unlink(pos, &ulpq->reasm_uo);
+-			sctp_ulpevent_free(event);
+-		}
+-	}
+-}
+-
+ static void sctp_report_iftsn(struct sctp_ulpq *ulpq, __u32 ftsn)
+ {
+-	/* Move the Cumulattive TSN Ack ahead. */
++	/* Move the Cumulattive TSN Ack ahead.  What to discard is decided per
++	 * skipped message in sctp_intl_skip(): messages on other streams are
++	 * interleaved in the TSN space, so a TSN at or below ftsn may belong
++	 * to a live message.
++	 */
+ 	sctp_tsnmap_skip(&ulpq->asoc->peer.tsn_map, ftsn);
+-	/* purge the fragmentation queue */
+-	sctp_intl_reasm_flushtsn(ulpq, ftsn);
+-	/* abort only when it's for all data */
+-	if (ftsn == sctp_tsnmap_get_max_tsn_seen(&ulpq->asoc->peer.tsn_map))
+-		sctp_intl_abort_pd(ulpq, GFP_ATOMIC);
+ }
+ 
+ static void sctp_handle_fwdtsn(struct sctp_ulpq *ulpq, struct sctp_chunk *chunk)
+@@ -1253,16 +1227,39 @@ static void sctp_handle_fwdtsn(struct sctp_ulpq *ulpq, struct sctp_chunk *chunk)
+ 		sctp_ulpq_skip(ulpq, ntohs(skip->stream), ntohs(skip->ssn));
+ }
+ 
++static void sctp_intl_skip_reasm(struct sctp_ulpq *ulpq, __u16 sid, __u32 mid,
++				 __u8 flags)
++{
++	struct sk_buff_head *reasm;
++	struct sk_buff *pos, *tmp;
++
++	reasm = flags & SCTP_FTSN_U_BIT ? &ulpq->reasm_uo : &ulpq->reasm;
++	skb_queue_walk_safe(reasm, pos, tmp) {
++		struct sctp_ulpevent *event = sctp_skb2event(pos);
++
++		/* These are sorted by stream and then MID. */
++		if (event->stream < sid)
++			continue;
++		if (event->stream > sid || MID_lt(mid, event->mid))
++			break;
++
++		__skb_unlink(pos, reasm);
++		sctp_ulpevent_free(event);
++	}
++}
++
+ static void sctp_intl_skip(struct sctp_ulpq *ulpq, __u16 sid, __u32 mid,
+ 			   __u8 flags)
+ {
+ 	struct sctp_stream_in *sin = sctp_stream_in(&ulpq->asoc->stream, sid);
+ 	struct sctp_stream *stream  = &ulpq->asoc->stream;
+ 
++	sctp_intl_skip_reasm(ulpq, sid, mid, flags);
++
+ 	if (flags & SCTP_FTSN_U_BIT) {
+-		if (sin->pd_mode_uo && MID_lt(sin->mid_uo, mid)) {
++		if (sin->pd_mode_uo && !MID_lt(mid, sin->mid_uo)) {
+ 			sin->pd_mode_uo = 0;
+-			sctp_intl_stream_abort_pd(ulpq, sid, mid, 0x1,
++			sctp_intl_stream_abort_pd(ulpq, sid, sin->mid_uo, 0x1,
+ 						  GFP_ATOMIC);
+ 		}
+ 		return;
+@@ -1273,7 +1270,7 @@ static void sctp_intl_skip(struct sctp_ulpq *ulpq, __u16 sid, __u32 mid,
+ 
+ 	if (sin->pd_mode) {
+ 		sin->pd_mode = 0;
+-		sctp_intl_stream_abort_pd(ulpq, sid, mid, 0x0, GFP_ATOMIC);
++		sctp_intl_stream_abort_pd(ulpq, sid, sin->mid, 0x0, GFP_ATOMIC);
+ 	}
+ 
+ 	sctp_mid_skip(stream, in, sid, mid);
+-- 
+2.47.3
+

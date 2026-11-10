@@ -1,0 +1,160 @@
+From c6d6956fa3258aaa1fa75d9aaf3ea6b8f33e39d0 Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Wed, 4 Nov 2026 07:48:34 -0800
+Subject: [PATCH] sctp: Build large messages without holding the socket lock
+
+sendmsg holds the socket lock while it splits a message into chunks, which
+is an allocation and a copy per fragment.  For a 1 MB message, that is most
+of a millisecond during which nothing else on the socket can make progress,
+including a small high priority message on another stream, which the stream
+scheduler would otherwise send right away.
+
+Let go of the lock for that part once the message is at least 64 KB, on an
+established association without authentication.  What gets read off the
+association either doesn't change or can be a little stale, and the same
+things are checked afterwards as after waiting for sndbuf.
+
+The first send on an association keeps the lock.  sctp_sendmsg() frees an
+association it just created when that send fails, and with the lock let go,
+it could be peeled off by then.
+
+On its own this doesn't help a single threaded sender.  With the large send
+on an io_uring worker, a small send during a 1 MB send on the same socket
+went from a p50 of 560 us to 15 us on an Orin, and from 1220 us to 43 us on a
+Raspberry Pi 5.
+
+DRAFT: for testing.
+
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ net/sctp/socket.c | 89 ++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 85 insertions(+), 4 deletions(-)
+
+diff --git a/net/sctp/socket.c b/net/sctp/socket.c
+index 7aaffc6..c05dc19 100644
+--- a/net/sctp/socket.c
++++ b/net/sctp/socket.c
+@@ -1785,10 +1785,82 @@ static int sctp_sendmsg_check_sflags(struct sctp_association *asoc,
+ 	return 1;
+ }
+ 
++static int sctp_sendmsg_check_stream(struct sctp_association *asoc,
++				     struct sctp_sndrcvinfo *sinfo)
++{
++	if (unlikely(sinfo->sinfo_stream >= asoc->stream.outcnt))
++		return -EINVAL;
++
++	if (unlikely(!SCTP_SO(&asoc->stream, sinfo->sinfo_stream)->ext))
++		return sctp_stream_init_ext(&asoc->stream, sinfo->sinfo_stream);
++
++	return 0;
++}
++
++/* Messages this big are mostly allocating chunks and copying data, which holds
++ * up everything else on the socket, including sends of small messages on other
++ * streams.  Any smaller and it's not worth letting go of the lock.
++ */
++#define SCTP_SENDMSG_UNLOCKED_MIN	(64 * 1024)
++
++/* Builds a message without holding the socket lock.  It only reads things off
++ * the association which are stable or which can be a little stale: a message
++ * built for a frag_point which just changed gets sent like one which was
++ * already queued when it changed.  Authentication keys aren't one of those, and
++ * neither is the state of an association which is still coming up.
++ */
++static struct sctp_datamsg *sctp_datamsg_from_user_unlocked(
++				struct sctp_association *asoc,
++				struct sctp_transport *transport,
++				struct sctp_sndrcvinfo *sinfo,
++				struct iov_iter *from)
++{
++	struct sock *sk = asoc->base.sk;
++	struct sctp_datamsg *datamsg;
++	struct sctp_chunk *chunk, *tmp;
++	int err;
++
++	if (transport)
++		sctp_transport_hold(transport);
++	sctp_association_hold(asoc);
++	release_sock(sk);
++
++	datamsg = sctp_datamsg_from_user(asoc, sinfo, from);
++
++	lock_sock(sk);
++
++	/* The same things can go wrong as while waiting for sndbuf.  Nothing owns
++	 * the chunks yet, so they can just go.
++	 */
++	if (asoc->base.dead)
++		err = -ESRCH;
++	else if (sk != asoc->base.sk || sk->sk_err ||
++		 asoc->state >= SCTP_STATE_SHUTDOWN_PENDING ||
++		 (transport && transport->dead))
++		err = -EPIPE;
++	else
++		err = sctp_sendmsg_check_stream(asoc, sinfo);
++
++	if (err && !IS_ERR(datamsg)) {
++		list_for_each_entry_safe(chunk, tmp, &datamsg->chunks,
++					 frag_list) {
++			list_del_init(&chunk->frag_list);
++			sctp_chunk_free(chunk);
++		}
++		sctp_datamsg_put(datamsg);
++	}
++
++	if (transport)
++		sctp_transport_put(transport);
++	sctp_association_put(asoc);
++
++	return err && !IS_ERR(datamsg) ? ERR_PTR(err) : datamsg;
++}
++
+ static int sctp_sendmsg_to_asoc(struct sctp_association *asoc,
+ 				struct msghdr *msg, size_t msg_len,
+ 				struct sctp_transport *transport,
+-				struct sctp_sndrcvinfo *sinfo)
++				struct sctp_sndrcvinfo *sinfo, bool new)
+ {
+ 	struct sock *sk = asoc->base.sk;
+ 	struct sctp_sock *sp = sctp_sk(sk);
+@@ -1854,7 +1926,16 @@ static int sctp_sendmsg_to_asoc(struct sctp_association *asoc,
+ 		pr_debug("%s: we associated primitively\n", __func__);
+ 	}
+ 
+-	datamsg = sctp_datamsg_from_user(asoc, sinfo, &msg->msg_iter);
++	/* If this fails, the caller frees an association it just created.  That
++	 * isn't safe once anyone else has been able to get at the association.
++	 */
++	if (!new && msg_len >= SCTP_SENDMSG_UNLOCKED_MIN &&
++	    sctp_state(asoc, ESTABLISHED) &&
++	    !sctp_auth_send_cid(SCTP_CID_DATA, asoc))
++		datamsg = sctp_datamsg_from_user_unlocked(asoc, transport, sinfo,
++							  &msg->msg_iter);
++	else
++		datamsg = sctp_datamsg_from_user(asoc, sinfo, &msg->msg_iter);
+ 	if (IS_ERR(datamsg)) {
+ 		err = PTR_ERR(datamsg);
+ 		goto err;
+@@ -1980,7 +2061,7 @@ static int sctp_sendmsg(struct sock *sk, struct msghdr *msg, size_t msg_len)
+ 			sctp_sendmsg_update_sinfo(asoc, sinfo, &cmsgs);
+ 
+ 			err = sctp_sendmsg_to_asoc(asoc, msg, msg_len,
+-						   NULL, sinfo);
++						   NULL, sinfo, false);
+ 			if (err < 0)
+ 				goto out_unlock;
+ 
+@@ -2035,7 +2116,7 @@ static int sctp_sendmsg(struct sock *sk, struct msghdr *msg, size_t msg_len)
+ 	sctp_sendmsg_update_sinfo(asoc, sinfo, &cmsgs);
+ 
+ 	/* Send msg to the asoc */
+-	err = sctp_sendmsg_to_asoc(asoc, msg, msg_len, transport, sinfo);
++	err = sctp_sendmsg_to_asoc(asoc, msg, msg_len, transport, sinfo, new);
+ 	if (err < 0 && err != -ESRCH && new)
+ 		sctp_association_free(asoc);
+ 
+-- 
+2.47.3
+

@@ -1,0 +1,407 @@
+From 7bd7435b03edee51bc436cbd2570ec5a0399cf9a Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Mon, 2 Nov 2026 00:29:55 -0800
+Subject: [PATCH] sctp: Track runs of contiguous fragments in reassembly
+
+sctp_ulpq_retrieve_reassembled() walks the whole reasm queue every time
+a fragment arrives, looking for a complete message.  A large message
+arrives as thousands of fragments, so once loss or reordering leaves
+fragments queued, reassembling one message costs time quadratic in its
+size, all of it in softirq context.
+
+Track, for every message in reasm that has its FIRST_FRAG, the run of
+contiguous fragments that follows it.  A new fragment only needs to be
+matched against these runs, so finding the complete message no longer
+walks the queue.  The runs are rebuilt with one walk whenever anything
+other than storing a fragment and retrieving a complete message changes
+reasm (partial delivery, renege, FORWARD-TSN, abort), and are not
+trusted while partial delivery is in progress.  Delivery follows the
+same rules as the scan: the first complete message is delivered, and
+partial delivery only starts with the message at the head of reasm when
+no other message has its FIRST_FRAG yet.
+
+Up to SCTP_ULPQ_REASM_RUNS (16) messages are tracked.  Beyond that,
+retrieval falls back to the original scan until a message is delivered.
+Measured on a link with 1% loss and reordering, receiving messages of
+up to 3 MB, at most 5 runs were in use; 16 was only reached with a 64 KB
+partial delivery point, where the scan fallback took over.
+
+A differential fuzzer comparing this against the original ulpqueue.c
+(106M random scenarios covering loss, duplication, reordering, partial
+delivery, FORWARD-TSN, renege and wrapping TSNs) found no difference in
+the messages delivered.
+
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ include/net/sctp/ulpqueue.h |  25 ++++
+ net/sctp/ulpqueue.c         | 237 +++++++++++++++++++++++++++++++++++-
+ 2 files changed, 259 insertions(+), 3 deletions(-)
+
+diff --git a/include/net/sctp/ulpqueue.h b/include/net/sctp/ulpqueue.h
+index 60f6641..fb60beb 100644
+--- a/include/net/sctp/ulpqueue.h
++++ b/include/net/sctp/ulpqueue.h
+@@ -25,6 +25,17 @@
+ #ifndef __sctp_ulpqueue_h__
+ #define __sctp_ulpqueue_h__
+ 
++/* A message in reasm whose FIRST_FRAG has arrived, and how far its fragments
++ * are contiguous from there.
++ */
++struct sctp_ulpq_reasm_run {
++	struct sk_buff *first;	/* The FIRST_FRAG. */
++	struct sk_buff *last;	/* The last fragment contiguous with it. */
++	size_t len;		/* Bytes from first through last. */
++};
++
++#define SCTP_ULPQ_REASM_RUNS 16
++
+ /* A structure to carry information to the ULP (e.g. Sockets API) */
+ struct sctp_ulpq {
+ 	char pd_mode;
+@@ -32,6 +43,20 @@ struct sctp_ulpq {
+ 	struct sk_buff_head reasm;
+ 	struct sk_buff_head reasm_uo;
+ 	struct sk_buff_head lobby;
++	/* The runs of every message in reasm that has its FIRST_FRAG, in TSN
++	 * order, so a new fragment is only matched against these instead of
++	 * rescanning the whole queue for a complete message.  Only meaningful
++	 * while reasm_runs_valid; anything other than storing a fragment and
++	 * retrieving a complete message clears that, and the next retrieval
++	 * rebuilds the runs with one scan.
++	 */
++	struct sctp_ulpq_reasm_run reasm_runs[SCTP_ULPQ_REASM_RUNS];
++	u8 reasm_nruns;
++	bool reasm_runs_valid;
++	/* More messages than reasm_runs can hold were queued, so retrieval
++	 * scans instead until a message is delivered or reasm changes.
++	 */
++	bool reasm_runs_overflow;
+ };
+ 
+ /* Prototypes. */
+diff --git a/net/sctp/ulpqueue.c b/net/sctp/ulpqueue.c
+index b05daaf..e2b8ff6 100644
+--- a/net/sctp/ulpqueue.c
++++ b/net/sctp/ulpqueue.c
+@@ -35,6 +35,136 @@ static struct sctp_ulpevent *sctp_ulpq_order(struct sctp_ulpq *,
+ 					      struct sctp_ulpevent *);
+ static void sctp_ulpq_reasm_drain(struct sctp_ulpq *ulpq);
+ 
++static void sctp_ulpq_reasm_runs_invalidate(struct sctp_ulpq *ulpq)
++{
++	ulpq->reasm_runs_valid = false;
++	ulpq->reasm_runs_overflow = false;
++}
++
++static __u32 sctp_ulpq_skb_tsn(struct sk_buff *skb)
++{
++	return sctp_skb2event(skb)->tsn;
++}
++
++static int sctp_ulpq_skb_frag(struct sk_buff *skb)
++{
++	return sctp_skb2event(skb)->msg_flags & SCTP_DATA_FRAG_MASK;
++}
++
++static bool sctp_ulpq_reasm_run_complete(const struct sctp_ulpq_reasm_run *run)
++{
++	return sctp_ulpq_skb_frag(run->last) == SCTP_DATA_LAST_FRAG;
++}
++
++/* Extend @run over the fragments already queued after it that continue it.
++ * Returns true once it reaches its LAST_FRAG.
++ */
++static bool sctp_ulpq_reasm_run_extend(struct sctp_ulpq *ulpq,
++				       struct sctp_ulpq_reasm_run *run)
++{
++	struct sk_buff *next;
++
++	while (!sctp_ulpq_reasm_run_complete(run)) {
++		next = run->last->next;
++		if (next == (struct sk_buff *)&ulpq->reasm ||
++		    sctp_ulpq_skb_tsn(next) != sctp_ulpq_skb_tsn(run->last) + 1 ||
++		    sctp_ulpq_skb_frag(next) == SCTP_DATA_FIRST_FRAG)
++			break;
++		run->last = next;
++		run->len += next->len;
++	}
++	return sctp_ulpq_reasm_run_complete(run);
++}
++
++/* Rebuild the runs with one scan of reasm.  Returns false if there are more
++ * messages than runs to track them in.
++ */
++static bool sctp_ulpq_reasm_runs_rebuild(struct sctp_ulpq *ulpq)
++{
++	struct sctp_ulpq_reasm_run *run = NULL;
++	struct sk_buff *pos;
++
++	ulpq->reasm_nruns = 0;
++	ulpq->reasm_runs_valid = false;
++	skb_queue_walk(&ulpq->reasm, pos) {
++		if (sctp_ulpq_skb_frag(pos) == SCTP_DATA_FIRST_FRAG) {
++			if (ulpq->reasm_nruns == SCTP_ULPQ_REASM_RUNS)
++				return false;
++			run = &ulpq->reasm_runs[ulpq->reasm_nruns++];
++			run->first = pos;
++			run->last = pos;
++			run->len = pos->len;
++		} else if (run && !sctp_ulpq_reasm_run_complete(run) &&
++			   sctp_ulpq_skb_tsn(pos) ==
++				   sctp_ulpq_skb_tsn(run->last) + 1) {
++			run->last = pos;
++			run->len += pos->len;
++		} else {
++			run = NULL;
++		}
++	}
++	/* Fragments stored during partial delivery don't update the runs, so
++	 * they are only good for this retrieval then.
++	 */
++	ulpq->reasm_runs_valid = !ulpq->pd_mode;
++	return true;
++}
++
++/* Account for @skb, just stored in reasm.  Returns the run it started or
++ * extended, or NULL if it doesn't continue any run yet.  Switches to
++ * reasm_runs_overflow if there is no room for a new run.
++ */
++static struct sctp_ulpq_reasm_run *
++sctp_ulpq_reasm_runs_add(struct sctp_ulpq *ulpq, struct sk_buff *skb)
++{
++	__u32 tsn = sctp_ulpq_skb_tsn(skb);
++	struct sctp_ulpq_reasm_run *run;
++	int i, n = ulpq->reasm_nruns;
++
++	/* Runs are in TSN order; find the first one that starts after @skb. */
++	for (i = 0; i < n; i++)
++		if (TSN_lt(tsn, sctp_ulpq_skb_tsn(ulpq->reasm_runs[i].first)))
++			break;
++
++	if (sctp_ulpq_skb_frag(skb) == SCTP_DATA_FIRST_FRAG) {
++		if (n == SCTP_ULPQ_REASM_RUNS) {
++			ulpq->reasm_runs_valid = false;
++			ulpq->reasm_runs_overflow = true;
++			return NULL;
++		}
++		memmove(&ulpq->reasm_runs[i + 1], &ulpq->reasm_runs[i],
++			(n - i) * sizeof(ulpq->reasm_runs[0]));
++		ulpq->reasm_nruns++;
++		run = &ulpq->reasm_runs[i];
++		run->first = skb;
++		run->last = skb;
++		run->len = skb->len;
++	} else {
++		/* Only the message that starts before @skb can use it, and only
++		 * if @skb is the next one after where it is contiguous to.
++		 * Anything else is in a gap and changes nothing yet.
++		 */
++		if (!i)
++			return NULL;
++		run = &ulpq->reasm_runs[i - 1];
++		if (sctp_ulpq_reasm_run_complete(run) ||
++		    tsn != sctp_ulpq_skb_tsn(run->last) + 1)
++			return NULL;
++	}
++	sctp_ulpq_reasm_run_extend(ulpq, run);
++	return run;
++}
++
++static void sctp_ulpq_reasm_run_remove(struct sctp_ulpq *ulpq,
++				       struct sctp_ulpq_reasm_run *run)
++{
++	int i = run - ulpq->reasm_runs;
++
++	memmove(run, run + 1,
++		(ulpq->reasm_nruns - i - 1) * sizeof(ulpq->reasm_runs[0]));
++	ulpq->reasm_nruns--;
++}
++
+ /* 1st Level Abstractions */
+ 
+ /* Initialize a ULP queue from a block of memory.  */
+@@ -65,6 +195,7 @@ void sctp_ulpq_flush(struct sctp_ulpq *ulpq)
+ 		event = sctp_skb2event(skb);
+ 		sctp_ulpevent_free(event);
+ 	}
++	sctp_ulpq_reasm_runs_invalidate(ulpq);
+ 
+ 	while ((skb = __skb_dequeue(&ulpq->reasm_uo)) != NULL) {
+ 		event = sctp_skb2event(skb);
+@@ -164,6 +295,10 @@ static void sctp_ulpq_set_pd(struct sctp_ulpq *ulpq)
+ {
+ 	struct sctp_sock *sp = sctp_sk(ulpq->asoc->base.sk);
+ 
++	/* Fragments are stored without updating the runs until partial
++	 * delivery ends.
++	 */
++	sctp_ulpq_reasm_runs_invalidate(ulpq);
+ 	atomic_inc(&sp->pd_mode);
+ 	ulpq->pd_mode = 1;
+ }
+@@ -390,7 +525,8 @@ struct sctp_ulpevent *sctp_make_reassembled_event(struct net *net,
+ /* Helper function to check if an incoming chunk has filled up the last
+  * missing fragment in a SCTP datagram and return the corresponding event.
+  */
+-static struct sctp_ulpevent *sctp_ulpq_retrieve_reassembled(struct sctp_ulpq *ulpq)
++static struct sctp_ulpevent *
++sctp_ulpq_retrieve_reassembled_scan(struct sctp_ulpq *ulpq)
+ {
+ 	struct sk_buff *pos;
+ 	struct sctp_ulpevent *cevent;
+@@ -497,6 +633,90 @@ found:
+ 	goto done;
+ }
+ 
++/* Retrieve a complete message from reasm, or start partial delivery of the
++ * first one if it is long enough.  @new is the fragment just stored, or NULL
++ * to look at the whole queue.
++ *
++ * This does what sctp_ulpq_retrieve_reassembled_scan() does, but by keeping
++ * the runs of contiguous fragments of each message instead of rescanning the
++ * whole queue for every fragment, which is quadratic in the number of
++ * fragments per message.  A new fragment only has to be matched against the
++ * runs, and only extends the run it continues.
++ */
++static struct sctp_ulpevent *
++sctp_ulpq_retrieve_reassembled(struct sctp_ulpq *ulpq, struct sk_buff *new)
++{
++	struct sctp_association *asoc = ulpq->asoc;
++	struct sctp_ulpq_reasm_run *run = NULL;
++	struct sctp_ulpevent *retval;
++	u32 pd_point;
++	int i;
++
++	if (ulpq->reasm_runs_valid && new)
++		sctp_ulpq_reasm_runs_add(ulpq, new);
++
++	if (!ulpq->reasm_runs_valid &&
++	    (ulpq->reasm_runs_overflow || !sctp_ulpq_reasm_runs_rebuild(ulpq))) {
++		/* More messages than we can track.  Scan, and only try
++		 * tracking them again once one has been delivered.
++		 */
++		ulpq->reasm_runs_overflow = true;
++		retval = sctp_ulpq_retrieve_reassembled_scan(ulpq);
++		if (retval)
++			ulpq->reasm_runs_overflow = false;
++		return retval;
++	}
++
++	/* Like the scan, retrieve the first complete message.  That is
++	 * normally the run @new just completed, but a delivery that failed
++	 * can leave an earlier one.
++	 */
++	for (i = 0; i < ulpq->reasm_nruns; i++) {
++		if (sctp_ulpq_reasm_run_complete(&ulpq->reasm_runs[i])) {
++			run = &ulpq->reasm_runs[i];
++			break;
++		}
++	}
++	if (run) {
++		retval = sctp_make_reassembled_event(asoc->base.net,
++						     &ulpq->reasm, run->first,
++						     run->last);
++		if (!retval) {
++			/* Still queued and complete; the next call tries
++			 * again.
++			 */
++			return NULL;
++		}
++		sctp_ulpq_reasm_run_remove(ulpq, run);
++		retval->msg_flags |= MSG_EOR;
++		return retval;
++	}
++
++	/* Like the scan, partial delivery can only start with the message at
++	 * the head of reasm, for as far as it is contiguous, and only when no
++	 * other message in reasm has its FIRST_FRAG yet: the scan forgets the
++	 * head message's run when it reaches another FIRST_FRAG.  We can
++	 * trigger partial delivery only if fragment interleave is set, or the
++	 * socket is not already in partial delivery.
++	 */
++	if (ulpq->reasm_nruns != 1 ||
++	    !skb_queue_is_first(&ulpq->reasm, ulpq->reasm_runs[0].first))
++		return NULL;
++	if (!sctp_sk(asoc->base.sk)->frag_interleave &&
++	    atomic_read(&sctp_sk(asoc->base.sk)->pd_mode))
++		return NULL;
++	pd_point = sctp_sk(asoc->base.sk)->pd_point;
++	if (!pd_point || pd_point > ulpq->reasm_runs[0].len)
++		return NULL;
++	retval = sctp_make_reassembled_event(asoc->base.net, &ulpq->reasm,
++					     ulpq->reasm_runs[0].first,
++					     ulpq->reasm_runs[0].last);
++	sctp_ulpq_reasm_runs_invalidate(ulpq);
++	if (retval)
++		sctp_ulpq_set_pd(ulpq);
++	return retval;
++}
++
+ /* Retrieve the next set of fragments of a partial message. */
+ static struct sctp_ulpevent *sctp_ulpq_retrieve_partial(struct sctp_ulpq *ulpq)
+ {
+@@ -558,6 +778,7 @@ static struct sctp_ulpevent *sctp_ulpq_retrieve_partial(struct sctp_ulpq *ulpq)
+ done:
+ 	retval = sctp_make_reassembled_event(ulpq->asoc->base.net, &ulpq->reasm,
+ 					     first_frag, last_frag);
++	sctp_ulpq_reasm_runs_invalidate(ulpq);
+ 	if (retval && is_last)
+ 		retval->msg_flags |= MSG_EOR;
+ 
+@@ -581,10 +802,16 @@ static struct sctp_ulpevent *sctp_ulpq_reasm(struct sctp_ulpq *ulpq,
+ 
+ 	sctp_ulpq_store_reasm(ulpq, event);
+ 	if (!ulpq->pd_mode)
+-		retval = sctp_ulpq_retrieve_reassembled(ulpq);
++		retval = sctp_ulpq_retrieve_reassembled(ulpq,
++							sctp_event2skb(event));
+ 	else {
+ 		__u32 ctsn, ctsnap;
+ 
++		/* The runs don't track fragments stored during partial
++		 * delivery.
++		 */
++		sctp_ulpq_reasm_runs_invalidate(ulpq);
++
+ 		/* Do not even bother unless this is the next tsn to
+ 		 * be delivered.
+ 		 */
+@@ -659,6 +886,7 @@ static struct sctp_ulpevent *sctp_ulpq_retrieve_first(struct sctp_ulpq *ulpq)
+ done:
+ 	retval = sctp_make_reassembled_event(ulpq->asoc->base.net, &ulpq->reasm,
+ 					     first_frag, last_frag);
++	sctp_ulpq_reasm_runs_invalidate(ulpq);
+ 	return retval;
+ }
+ 
+@@ -697,6 +925,7 @@ void sctp_ulpq_reasm_flushtsn(struct sctp_ulpq *ulpq, __u32 fwd_tsn)
+ 		if (TSN_lte(tsn, fwd_tsn)) {
+ 			__skb_unlink(pos, &ulpq->reasm);
+ 			sctp_ulpevent_free(event);
++			sctp_ulpq_reasm_runs_invalidate(ulpq);
+ 		} else
+ 			break;
+ 	}
+@@ -714,7 +943,7 @@ static void sctp_ulpq_reasm_drain(struct sctp_ulpq *ulpq)
+ 	if (skb_queue_empty(&ulpq->reasm))
+ 		return;
+ 
+-	while ((event = sctp_ulpq_retrieve_reassembled(ulpq)) != NULL) {
++	while ((event = sctp_ulpq_retrieve_reassembled(ulpq, NULL)) != NULL) {
+ 		struct sk_buff_head temp;
+ 
+ 		skb_queue_head_init(&temp);
+@@ -992,6 +1221,8 @@ __u16 sctp_ulpq_renege_list(struct sctp_ulpq *ulpq, struct sk_buff_head *list,
+ 		/* Unlink the event, then renege all applicable TSNs. */
+ 		__skb_unlink(skb, list);
+ 		sctp_ulpevent_free(event);
++		if (list == &ulpq->reasm)
++			sctp_ulpq_reasm_runs_invalidate(ulpq);
+ 		while (TSN_lte(tsn, last_tsn)) {
+ 			sctp_tsnmap_renege(tsnmap, tsn);
+ 			tsn++;
+-- 
+2.47.3
+

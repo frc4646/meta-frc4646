@@ -1,0 +1,260 @@
+From 9008eca304462351663db05a4f682e8a6fbcd255 Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Tue, 3 Nov 2026 17:33:08 -0800
+Subject: [PATCH] sctp: Drop late fragments of skipped messages
+
+A fragment of a message the peer skipped can arrive after the FORWARD TSN
+if the network reorders them.  Its TSN is above the new cumulative TSN, so
+it isn't a duplicate.
+
+For an ordered message, its stream sequence is now below the next expected
+one, and the association is aborted with a protocol violation.  For an
+unordered I-DATA message, nothing checks at all.  The fragment sits in the
+reassembly queue holding receive window, or if it is the first one, starts
+a partial delivery which the next message on that stream gets merged into.
+
+Remember the last message each FORWARD TSN skipped per stream, and report
+the TSN but drop fragments of it.  A sender transmits the messages of a
+stream in order, so only the last one can have fragments above the
+cumulative TSN.  Anything else below the next expected sequence is still a
+protocol violation.
+
+DRAFT: needs review and Signed-off-by.  Depends on the I-FORWARD-TSN receive
+rework.  Follow-up to what Tim Budding's series leaves open.
+
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ include/net/sctp/stream_interleave.h |  1 +
+ include/net/sctp/structs.h           |  5 +++
+ net/sctp/sm_statefuns.c              |  8 ++++
+ net/sctp/stream.c                    | 17 +++++---
+ net/sctp/stream_interleave.c         | 58 ++++++++++++++++++++++++++++
+ net/sctp/ulpqueue.c                  |  2 +
+ 6 files changed, 86 insertions(+), 5 deletions(-)
+
+diff --git a/include/net/sctp/stream_interleave.h b/include/net/sctp/stream_interleave.h
+index 5263585..264c47b 100644
+--- a/include/net/sctp/stream_interleave.h
++++ b/include/net/sctp/stream_interleave.h
+@@ -25,6 +25,7 @@ struct sctp_stream_interleave {
+ 					    int len, __u8 flags, gfp_t gfp);
+ 	void	(*assign_number)(struct sctp_chunk *chunk);
+ 	bool	(*validate_data)(struct sctp_chunk *chunk);
++	bool	(*skipped_data)(struct sctp_chunk *chunk);
+ 	int	(*ulpevent_data)(struct sctp_ulpq *ulpq,
+ 				 struct sctp_chunk *chunk, gfp_t gfp);
+ 	int	(*enqueue_event)(struct sctp_ulpq *ulpq,
+diff --git a/include/net/sctp/structs.h b/include/net/sctp/structs.h
+index 01f19f9..3a6b717 100644
+--- a/include/net/sctp/structs.h
++++ b/include/net/sctp/structs.h
+@@ -1442,6 +1442,11 @@ struct sctp_stream_in {
+ 	__u32 fsn_uo;
+ 	char pd_mode;
+ 	char pd_mode_uo;
++	/* The last messages a FORWARD TSN skipped, if skip_valid says so. */
++	__u32 skip_mid;
++	__u32 skip_mid_uo;
++	char skip_valid;
++	char skip_valid_uo;
+ };
+ 
+ struct sctp_stream {
+diff --git a/net/sctp/sm_statefuns.c b/net/sctp/sm_statefuns.c
+index 9b23c11..85082b9 100644
+--- a/net/sctp/sm_statefuns.c
++++ b/net/sctp/sm_statefuns.c
+@@ -6670,6 +6670,14 @@ static int sctp_eat_data(const struct sctp_association *asoc,
+ 		return SCTP_IERROR_BAD_STREAM;
+ 	}
+ 
++	/* The peer already gave up on this message.  Mark the tsn as received
++	 * so it isn't held against the peer, and drop it.
++	 */
++	if (asoc->stream.si->skipped_data(chunk)) {
++		sctp_add_cmd_sf(commands, SCTP_CMD_REPORT_TSN, SCTP_U32(tsn));
++		return SCTP_IERROR_BAD_STREAM;
++	}
++
+ 	/* Check to see if the SSN is possible for this TSN.
+ 	 * The biggest gap we can record is 4K wide.  Since SSNs wrap
+ 	 * at an unsigned short, there is no way that an SSN can
+diff --git a/net/sctp/stream.c b/net/sctp/stream.c
+index a7faf3e..5a02f44 100644
+--- a/net/sctp/stream.c
++++ b/net/sctp/stream.c
+@@ -192,6 +192,13 @@ void sctp_stream_free(struct sctp_stream *stream)
+ 	genradix_free(&stream->in);
+ }
+ 
++static void sctp_stream_in_reset(struct sctp_stream_in *sin)
++{
++	sin->mid = 0;
++	sin->skip_valid = 0;
++	sin->skip_valid_uo = 0;
++}
++
+ void sctp_stream_clear(struct sctp_stream *stream)
+ {
+ 	int i;
+@@ -202,7 +209,7 @@ void sctp_stream_clear(struct sctp_stream *stream)
+ 	}
+ 
+ 	for (i = 0; i < stream->incnt; i++)
+-		SCTP_SI(stream, i)->mid = 0;
++		sctp_stream_in_reset(SCTP_SI(stream, i));
+ }
+ 
+ void sctp_stream_update(struct sctp_stream *stream, struct sctp_stream *new)
+@@ -586,10 +593,10 @@ struct sctp_chunk *sctp_process_strreset_outreq(
+ 
+ 	if (nums)
+ 		for (i = 0; i < nums; i++)
+-			SCTP_SI(stream, ntohs(str_p[i]))->mid = 0;
++			sctp_stream_in_reset(SCTP_SI(stream, ntohs(str_p[i])));
+ 	else
+ 		for (i = 0; i < stream->incnt; i++)
+-			SCTP_SI(stream, i)->mid = 0;
++			sctp_stream_in_reset(SCTP_SI(stream, i));
+ 
+ 	result = SCTP_STRRESET_PERFORMED;
+ 
+@@ -763,7 +770,7 @@ struct sctp_chunk *sctp_process_strreset_tsnreq(
+ 		SCTP_SO(stream, i)->mid_uo = 0;
+ 	}
+ 	for (i = 0; i < stream->incnt; i++)
+-		SCTP_SI(stream, i)->mid = 0;
++		sctp_stream_in_reset(SCTP_SI(stream, i));
+ 
+ 	result = SCTP_STRRESET_PERFORMED;
+ 
+@@ -1030,7 +1037,7 @@ struct sctp_chunk *sctp_process_strreset_resp(
+ 				SCTP_SO(stream, i)->mid_uo = 0;
+ 			}
+ 			for (i = 0; i < stream->incnt; i++)
+-				SCTP_SI(stream, i)->mid = 0;
++				sctp_stream_in_reset(SCTP_SI(stream, i));
+ 		}
+ 
+ 		for (i = 0; i < stream->outcnt; i++)
+diff --git a/net/sctp/stream_interleave.c b/net/sctp/stream_interleave.c
+index 292328f..2a52cbc 100644
+--- a/net/sctp/stream_interleave.c
++++ b/net/sctp/stream_interleave.c
+@@ -102,6 +102,34 @@ static bool sctp_validate_data(struct sctp_chunk *chunk)
+ 	return !SSN_lt(ssn, sctp_ssn_peek(stream, in, sid));
+ }
+ 
++/* A fragment of a message we were told to skip can show up after the FORWARD
++ * TSN if the network reorders them.  It's above the new cumulative TSN, so it
++ * isn't a duplicate, and nothing is going to complete that message any more.
++ *
++ * Only the last skipped message needs remembering.  A sender transmits the
++ * messages of a stream in order, so all fragments of the earlier ones have
++ * lower TSNs than the skipped fragment, which is at or below the cumulative
++ * TSN.
++ */
++static bool sctp_skipped_data(struct sctp_chunk *chunk)
++{
++	struct sctp_stream *stream = &chunk->asoc->stream;
++	struct sctp_stream_in *sin;
++	__u16 sid, ssn;
++
++	if (chunk->chunk_hdr->type != SCTP_CID_DATA ||
++	    chunk->chunk_hdr->flags & SCTP_DATA_UNORDERED)
++		return false;
++
++	sid = sctp_chunk_stream_no(chunk);
++	ssn = ntohs(chunk->subh.data_hdr->ssn);
++	sin = sctp_stream_in(stream, sid);
++
++	/* SSNs wrap, so also make sure we're past it. */
++	return sin->skip_valid && (__u16)sin->skip_mid == ssn &&
++	       SSN_lt(ssn, sctp_ssn_peek(stream, in, sid));
++}
++
+ static bool sctp_validate_idata(struct sctp_chunk *chunk)
+ {
+ 	struct sctp_stream *stream;
+@@ -121,6 +149,28 @@ static bool sctp_validate_idata(struct sctp_chunk *chunk)
+ 	return !MID_lt(mid, sctp_mid_peek(stream, in, sid));
+ }
+ 
++/* See sctp_skipped_data(). */
++static bool sctp_skipped_idata(struct sctp_chunk *chunk)
++{
++	struct sctp_stream *stream = &chunk->asoc->stream;
++	struct sctp_stream_in *sin;
++	__u32 mid;
++	__u16 sid;
++
++	if (chunk->chunk_hdr->type != SCTP_CID_I_DATA)
++		return false;
++
++	sid = sctp_chunk_stream_no(chunk);
++	mid = ntohl(chunk->subh.idata_hdr->mid);
++	sin = sctp_stream_in(stream, sid);
++
++	if (chunk->chunk_hdr->flags & SCTP_DATA_UNORDERED)
++		return sin->skip_valid_uo && sin->skip_mid_uo == mid;
++
++	return sin->skip_valid && sin->skip_mid == mid &&
++	       MID_lt(mid, sctp_mid_peek(stream, in, sid));
++}
++
+ static void sctp_intl_store_reasm(struct sctp_ulpq *ulpq,
+ 				  struct sctp_ulpevent *event)
+ {
+@@ -1257,6 +1307,10 @@ static void sctp_intl_skip(struct sctp_ulpq *ulpq, __u16 sid, __u32 mid,
+ 	sctp_intl_skip_reasm(ulpq, sid, mid, flags);
+ 
+ 	if (flags & SCTP_FTSN_U_BIT) {
++		if (!sin->skip_valid_uo || MID_lt(sin->skip_mid_uo, mid)) {
++			sin->skip_mid_uo = mid;
++			sin->skip_valid_uo = 1;
++		}
+ 		if (sin->pd_mode_uo && !MID_lt(mid, sin->mid_uo)) {
+ 			sin->pd_mode_uo = 0;
+ 			sctp_intl_stream_abort_pd(ulpq, sid, sin->mid_uo, 0x1,
+@@ -1274,6 +1328,8 @@ static void sctp_intl_skip(struct sctp_ulpq *ulpq, __u16 sid, __u32 mid,
+ 	}
+ 
+ 	sctp_mid_skip(stream, in, sid, mid);
++	sin->skip_mid = mid;
++	sin->skip_valid = 1;
+ 
+ 	sctp_intl_reap_ordered(ulpq, sid);
+ }
+@@ -1304,6 +1360,7 @@ static struct sctp_stream_interleave sctp_stream_interleave_0 = {
+ 	.make_datafrag		= sctp_make_datafrag_empty,
+ 	.assign_number		= sctp_chunk_assign_ssn,
+ 	.validate_data		= sctp_validate_data,
++	.skipped_data		= sctp_skipped_data,
+ 	.ulpevent_data		= sctp_ulpq_tail_data,
+ 	.enqueue_event		= do_ulpq_tail_event,
+ 	.renege_events		= sctp_ulpq_renege,
+@@ -1333,6 +1390,7 @@ static struct sctp_stream_interleave sctp_stream_interleave_1 = {
+ 	.make_datafrag		= sctp_make_idatafrag_empty,
+ 	.assign_number		= sctp_chunk_assign_mid,
+ 	.validate_data		= sctp_validate_idata,
++	.skipped_data		= sctp_skipped_idata,
+ 	.ulpevent_data		= sctp_ulpevent_idata,
+ 	.enqueue_event		= do_sctp_enqueue_event,
+ 	.renege_events		= sctp_renege_events,
+diff --git a/net/sctp/ulpqueue.c b/net/sctp/ulpqueue.c
+index e2b8ff6..b9ece47 100644
+--- a/net/sctp/ulpqueue.c
++++ b/net/sctp/ulpqueue.c
+@@ -1177,6 +1177,8 @@ void sctp_ulpq_skip(struct sctp_ulpq *ulpq, __u16 sid, __u16 ssn)
+ 
+ 	/* Mark that we are no longer expecting this SSN or lower. */
+ 	sctp_ssn_skip(stream, in, sid, ssn);
++	sctp_stream_in(stream, sid)->skip_mid = ssn;
++	sctp_stream_in(stream, sid)->skip_valid = 1;
+ 
+ 	/* Go find any other chunks that were waiting for
+ 	 * ordering and deliver them if needed.
+-- 
+2.47.3
+

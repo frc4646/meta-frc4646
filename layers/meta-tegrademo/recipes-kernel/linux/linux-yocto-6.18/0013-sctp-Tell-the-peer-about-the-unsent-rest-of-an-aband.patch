@@ -1,0 +1,108 @@
+From d789068acdf46c667a12bb7b7906e659ffe6a817 Mon Sep 17 00:00:00 2001
+From: Austin Schuh <austin.linux@gmail.com>
+Date: Mon, 2 Nov 2026 20:59:12 -0800
+Subject: [PATCH] sctp: Tell the peer about the unsent rest of an abandoned
+ message
+
+When a partly sent message expires, sctp_outq_flush_data() frees its
+remaining chunks without assigning them TSNs.  If the chunks which were
+sent have been acknowledged by then, nothing generates a FORWARD TSN.
+The peer waits for the rest of the message forever, holding up the
+stream, and then the rest of the association once later messages fill
+the receive window.
+
+Assign the remaining chunks TSNs and abandon them like chunks which were
+sent, so a FORWARD TSN skips the message.
+
+DRAFT: needs review and Signed-off-by.
+
+Upstream-Status: Pending
+Assisted-by: LLM
+---
+ net/sctp/outqueue.c          | 32 ++++++++++++++++++++++++++++++++
+ net/sctp/stream_interleave.c |  5 +++++
+ 2 files changed, 37 insertions(+)
+
+diff --git a/net/sctp/outqueue.c b/net/sctp/outqueue.c
+index f6b8c13..3a02fbf 100644
+--- a/net/sctp/outqueue.c
++++ b/net/sctp/outqueue.c
+@@ -794,6 +794,8 @@ struct sctp_flush_ctx {
+ 	/* Packet on the current transport above */
+ 	struct sctp_packet *packet;
+ 	gfp_t gfp;
++	/* Chunks of a partly sent message were abandoned before being sent */
++	bool abandoned_unsent;
+ };
+ 
+ /* transport: current transport */
+@@ -1089,6 +1091,20 @@ static void sctp_outq_flush_data(struct sctp_flush_ctx *ctx,
+ 		if (sctp_chunk_abandoned(chunk)) {
+ 			sctp_sched_dequeue_done(ctx->q, chunk);
+ 			sctp_chunk_fail(chunk, 0);
++			/* If some of this message has been sent already, the
++			 * peer needs to be told the rest isn't coming or it
++			 * will keep waiting for it, holding up the stream.
++			 * The sent chunks might already be acked, so they
++			 * can't be relied on to generate a FORWARD TSN.
++			 */
++			if (chunk->has_ssn) {
++				sctp_chunk_assign_tsn(chunk);
++				/* The newest TSN goes last. */
++				list_add_tail(&chunk->transmitted_list,
++					      &ctx->q->abandoned);
++				ctx->abandoned_unsent = true;
++				continue;
++			}
+ 			sctp_chunk_free(chunk);
+ 			continue;
+ 		}
+@@ -1219,6 +1235,17 @@ static void sctp_outq_flush(struct sctp_outq *q, int rtx_timeout, gfp_t gfp)
+ sctp_flush_out:
+ 
+ 	sctp_outq_flush_transports(&ctx);
++
++	/* Control chunks have to go before DATA in a packet, so this can't be
++	 * bundled with what we just sent.
++	 */
++	if (ctx.abandoned_unsent) {
++		q->asoc->stream.si->generate_ftsn(q, q->asoc->ctsn_ack_point);
++		ctx.transport = NULL;
++		ctx.packet = NULL;
++		sctp_outq_flush_ctrl(&ctx);
++		sctp_outq_flush_transports(&ctx);
++	}
+ }
+ 
+ /* Update unack_data based on the incoming SACK chunk */
+@@ -1874,6 +1901,11 @@ void sctp_generate_fwdtsn(struct sctp_outq *q, __u32 ctsn)
+ 			list_del_init(lchunk);
+ 			sctp_chunk_free(chunk);
+ 		} else {
++			/* The peer ignores anything past what its TSN map can
++			 * hold.  It'll get the rest after acknowledging this.
++			 */
++			if (TSN_lte(ctsn + SCTP_TSN_MAP_SIZE, tsn))
++				break;
+ 			if (TSN_lte(tsn, asoc->adv_peer_ack_point+1)) {
+ 				asoc->adv_peer_ack_point = tsn;
+ 				if (chunk->chunk_hdr->flags &
+diff --git a/net/sctp/stream_interleave.c b/net/sctp/stream_interleave.c
+index 840f240..cbf8c55 100644
+--- a/net/sctp/stream_interleave.c
++++ b/net/sctp/stream_interleave.c
+@@ -1118,6 +1118,11 @@ static void sctp_generate_iftsn(struct sctp_outq *q, __u32 ctsn)
+ 		if (TSN_lte(tsn, ctsn)) {
+ 			list_del_init(lchunk);
+ 			sctp_chunk_free(chunk);
++		} else if (TSN_lte(ctsn + SCTP_TSN_MAP_SIZE, tsn)) {
++			/* The peer ignores anything past what its TSN map can
++			 * hold.  It'll get the rest after acknowledging this.
++			 */
++			break;
+ 		} else if (TSN_lte(tsn, asoc->adv_peer_ack_point + 1)) {
+ 			__be16 sid = chunk->subh.idata_hdr->stream;
+ 			__be32 mid = chunk->subh.idata_hdr->mid;
+-- 
+2.47.3
+

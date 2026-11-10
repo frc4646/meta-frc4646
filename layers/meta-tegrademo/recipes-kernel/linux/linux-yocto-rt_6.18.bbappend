@@ -19,6 +19,17 @@ SRC_URI:append:tegra = " \
     file://0009-r8169-re-enable-interrupt-source-RxOverflow.patch \
     file://0010-net-run-the-NAPI-deferred-poll-timer-in-hard-IRQ-context.patch \
     file://0011-net-sched-boost-a-preempted-qdisc-owner-on-PREEMPT_RT.patch \
+    file://0012-sctp-Track-runs-of-contiguous-fragments-in-reassembl.patch \
+    file://0013-sctp-Tell-the-peer-about-the-unsent-rest-of-an-aband.patch \
+    file://0014-sctp-Limit-how-much-is-queued-below-a-socket.patch \
+    file://0015-sctp-Only-discard-the-skipped-messages-on-an-I-FORWA.patch \
+    file://0016-sctp-Drop-late-fragments-of-skipped-messages.patch \
+    file://0017-sctp-Only-abort-the-partial-delivery-a-FORWARD-TSN-s.patch \
+    file://0018-sctp-Only-start-partial-delivery-when-the-message-ca.patch \
+    file://0019-sctp-Deliver-the-lobby-first-when-partial-delivery-e.patch \
+    file://0020-sctp-Hold-partial-delivery-pieces-until-there-s-pd_p.patch \
+    file://0021-sctp-Build-large-messages-without-holding-the-socket.patch \
+    file://0022-sctp-Restart-RTT-measurement-when-the-timed-chunk-is.patch \
 "
 
 # Fragments in SRC_URI are merged before KERNEL_FEATURES, and the features
