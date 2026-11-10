@@ -131,8 +131,35 @@ RDEPENDS:${PN} = " \
     kernel-module-uvcvideo \
     kernel-module-usbmon \
     kernel-module-sctp \
+    kernel-module-nfnetlink \
+    kernel-module-sch-prio \
+    kernel-module-sch-fq-codel \
+    kernel-module-sch-codel \
+    kernel-module-sch-htb \
+    kernel-module-sch-tbf \
+    kernel-module-sch-sfq \
+    kernel-module-sch-multiq \
+    kernel-module-sch-mqprio \
+    kernel-module-sch-taprio \
+    kernel-module-sch-etf \
+    kernel-module-sch-cbs \
+    kernel-module-sch-netem \
+    kernel-module-sch-ingress \
+    kernel-module-cls-flower \
+    kernel-module-act-skbedit \
+    kernel-module-act-mirred \
+    kernel-module-act-police \
     tshark \
     tegra-bootfiles-dev \
+    perf \
+    bpftrace \
+    kexec \
+    rt-tests \
+    stress-ng \
+    iproute2-tc \
+    fio \
+    iperf3 \
+    linuxptp \
  "
 # clang
 #    gcc
