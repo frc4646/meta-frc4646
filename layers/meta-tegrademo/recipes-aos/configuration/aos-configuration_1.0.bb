@@ -26,7 +26,6 @@ do_install() {
     mkdir -p -m700 ${ROOT}${ROOT_HOME}/bin
     chown root:root ${ROOT}${ROOT_HOME}/bin
 
-    install -D -m0700 contents/root/bin/trace.sh ${ROOT}${ROOT_HOME}/bin/trace.sh
     install_content 0500 "root/bin/change_hostname.sh" "root:root"
     install_content 0500 "root/bin/chrt.sh" "root:root"
 
