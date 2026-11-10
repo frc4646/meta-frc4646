@@ -2,81 +2,164 @@ From: Austin Schuh <austin.linux@gmail.com>
 Date: Wed, 14 Oct 2026 21:45:00 -0700
 Subject: [PATCH] firmware: tegra: bpmp: populate debugfs in the background
 
-On Tegra234, mirroring the BPMP's debugfs tree into debugfs takes 5.2
-seconds at boot: the tree has about 10,800 entries, and each directory
-takes several BPMP requests.  The BPMP probe waits for it, and so does
-every device which depends on the BPMP for clocks, resets or power,
-which is most of them.  PCIe, NVMe and the root filesystem all start
-5 seconds later than they need to.
+Populating the BPMP debugfs mirror takes a series of synchronous BPMP
+requests, several per directory.  On an Orin Nano (Tegra234) the tree has
+about 10,800 entries, and the BPMP probe doesn't return for over five
+seconds.  Every device that gets its clocks, resets or power domains from
+the BPMP waits for it, which on Tegra234 is nearly all of them, so PCIe,
+NVMe and the root filesystem all come up five seconds late.
 
-Nothing in the kernel uses the mirror, and the probe already ignores
-any error from it, so build it from a workqueue instead.
+Commit c7fc690da6f1 ("firmware: tegra: bpmp: Allow BPMP debugfs population
+to be skipped") lets a system that doesn't need the mirror turn it off with
+tegra_bpmp.debugfs=0.  A system that does use it, for instance to set
+clocks from userspace at boot, still pays the full cost.
 
-Measured with initcall_debug on an Orin Nano: the BPMP probe goes from
-6.36 seconds to about 1.2 seconds.
+Nothing in the kernel uses the mirror, and the probe already only logs an
+error from it, so populate it from a workqueue instead.  It isn't an
+async_schedule() job, since kernel_init() waits for all of those before it
+starts init.  The workqueue is freezable, so a system suspend waits for the
+mirror instead of failing its requests, and the mirrors of a system with
+several BPMPs are populated one at a time, as their probes did, so that one
+failing can't remove the shared root while another is filling it in.
 
-Upstream-Status: Pending
+The mirror is filled in as .debug-populating and renamed to debug once it
+is complete, so userspace never sees part of it.  Userspace that needs it
+right after boot can wait for debug to appear, for instance with inotify on
+the directory above it.
+
+Measured with initcall_debug on an Orin Nano running 6.18.39 with
+NVIDIA's patches: the BPMP probe returns after 1.2 seconds instead of
+6.36 seconds.
+
+Upstream-Status: Submitted [linux-tegra, v2 in preparation]
+Assisted-by: LLM
 Signed-off-by: Austin Schuh <austin.linux@gmail.com>
+
 ---
---- a/drivers/firmware/tegra/bpmp.c
-+++ b/drivers/firmware/tegra/bpmp.c
-@@ -11,6 +11,7 @@
- #include <linux/platform_device.h>
- #include <linux/pm.h>
- #include <linux/semaphore.h>
-+#include <linux/workqueue.h>
- #include <linux/sched/clock.h>
+diff --git a/drivers/firmware/tegra/bpmp-debugfs.c b/drivers/firmware/tegra/bpmp-debugfs.c
+index c05adba87869..5f43269f967b 100644
+--- a/drivers/firmware/tegra/bpmp-debugfs.c
++++ b/drivers/firmware/tegra/bpmp-debugfs.c
+@@ -775,13 +775,13 @@ static struct dentry *bpmp_debugfs_root;
  
- #include <soc/tegra/bpmp.h>
-@@ -710,8 +711,26 @@
- 	spin_unlock(&bpmp->lock);
+ static struct dentry *bpmp_debugfs_get_root(void)
+ {
+-	guard(mutex)(&bpmp_debugfs_root_lock);
++	lockdep_assert_held(&bpmp_debugfs_root_lock);
+ 	if (!bpmp_debugfs_root)
+ 		bpmp_debugfs_root = debugfs_create_dir("bpmp", NULL);
+ 	return bpmp_debugfs_root;
  }
  
-+struct tegra_bpmp_debugfs_work {
-+	struct work_struct work;
-+	struct tegra_bpmp *bpmp;
-+};
-+
-+static void tegra_bpmp_debugfs_work_fn(struct work_struct *work)
-+{
-+	struct tegra_bpmp_debugfs_work *dw =
-+		container_of(work, struct tegra_bpmp_debugfs_work, work);
-+	int err;
-+
-+	err = tegra_bpmp_init_debugfs(dw->bpmp);
-+	if (err < 0)
-+		dev_err(dw->bpmp->dev, "debugfs initialization failed: %d\n",
-+			err);
-+}
-+
- static int tegra_bpmp_probe(struct platform_device *pdev)
+-int tegra_bpmp_init_debugfs(struct tegra_bpmp *bpmp)
++static int tegra_bpmp_populate_debugfs(struct tegra_bpmp *bpmp)
  {
-+	struct tegra_bpmp_debugfs_work *debugfs_work;
- 	struct tegra_bpmp *bpmp;
- 	char tag[TAG_SZ];
- 	size_t size;
-@@ -804,10 +823,21 @@
- 			goto free_mrq;
- 	}
+ 	struct dentry *root, *d;
+ 	char name[32];
+@@ -793,6 +793,12 @@ int tegra_bpmp_init_debugfs(struct tegra_bpmp *bpmp)
+ 	if (!inband && !tegra_bpmp_mrq_is_supported(bpmp, MRQ_DEBUGFS))
+ 		return 0;
  
 +	/*
-+	 * Mirroring the BPMP's debugfs tree takes several requests per
-+	 * directory, and on Tegra234 that is several seconds.  Nothing else
-+	 * waits for it, so do it in the background rather than hold up every
-+	 * device that depends on the BPMP.
++	 * Populate one BPMP at a time, so that one failing can't remove the
++	 * shared root while another is creating its directory in it.
 +	 */
- 	if (tegra_sku_info.platform != TEGRA_PLATFORM_VDK) {
--		err = tegra_bpmp_init_debugfs(bpmp);
--		if (err < 0)
--			dev_err(&pdev->dev, "debugfs initialization failed: %d\n", err);
-+		debugfs_work = devm_kzalloc(&pdev->dev, sizeof(*debugfs_work),
-+					    GFP_KERNEL);
-+		if (debugfs_work) {
-+			debugfs_work->bpmp = bpmp;
-+			INIT_WORK(&debugfs_work->work,
-+				  tegra_bpmp_debugfs_work_fn);
-+			queue_work(system_unbound_wq, &debugfs_work->work);
-+		}
++	guard(mutex)(&bpmp_debugfs_root_lock);
++
+ 	root = bpmp_debugfs_get_root();
+ 	if (IS_ERR(root))
+ 		return PTR_ERR(root);
+@@ -808,7 +814,11 @@ int tegra_bpmp_init_debugfs(struct tegra_bpmp *bpmp)
+ 		}
  	}
  
- 	return 0;
+-	bpmp->debugfs_mirror = debugfs_create_dir("debug", d);
++	/*
++	 * Fill the mirror in under another name and rename it to "debug"
++	 * once it is complete, so that userspace never sees part of it.
++	 */
++	bpmp->debugfs_mirror = debugfs_create_dir(".debug-populating", d);
+ 	if (IS_ERR(bpmp->debugfs_mirror)) {
+ 		err = PTR_ERR(bpmp->debugfs_mirror);
+ 		goto out;
+@@ -820,12 +830,14 @@ int tegra_bpmp_init_debugfs(struct tegra_bpmp *bpmp)
+ 	else
+ 		err = bpmp_populate_debugfs_shmem(bpmp);
+ 
++	if (!err)
++		err = debugfs_change_name(bpmp->debugfs_mirror, "debug");
++
+ out:
+ 	if (err < 0) {
+ 		if (!IS_ERR(d))
+ 			debugfs_remove_recursive(d);
+ 
+-		guard(mutex)(&bpmp_debugfs_root_lock);
+ 		if (root == d) {
+ 			bpmp_debugfs_root = NULL;
+ 		} else if (simple_empty(root)) {
+@@ -836,3 +848,44 @@ int tegra_bpmp_init_debugfs(struct tegra_bpmp *bpmp)
+ 
+ 	return err;
+ }
++
++static void tegra_bpmp_debugfs_work(struct work_struct *work)
++{
++	struct tegra_bpmp *bpmp =
++		container_of(work, struct tegra_bpmp, debugfs_work);
++	int err;
++
++	err = tegra_bpmp_populate_debugfs(bpmp);
++	if (err < 0)
++		dev_err(bpmp->dev, "debugfs initialization failed: %d\n", err);
++}
++
++static void tegra_bpmp_cancel_debugfs(void *data)
++{
++	struct tegra_bpmp *bpmp = data;
++
++	cancel_work_sync(&bpmp->debugfs_work);
++}
++
++int tegra_bpmp_init_debugfs(struct tegra_bpmp *bpmp)
++{
++	int err;
++
++	INIT_WORK(&bpmp->debugfs_work, tegra_bpmp_debugfs_work);
++
++	err = devm_add_action_or_reset(bpmp->dev, tegra_bpmp_cancel_debugfs,
++				       bpmp);
++	if (err < 0)
++		return err;
++
++	/*
++	 * Mirroring the BPMP's debugfs tree takes several requests per
++	 * directory, which on Tegra234 adds up to seconds.  Nothing else
++	 * waits for it, so do it in the background rather than hold up every
++	 * device that depends on the BPMP.  The workqueue is freezable so
++	 * that system suspend waits for it instead of failing its requests.
++	 */
++	queue_work(system_freezable_wq, &bpmp->debugfs_work);
++
++	return 0;
++}
+diff --git a/include/soc/tegra/bpmp.h b/include/soc/tegra/bpmp.h
+index f5e4ac5b8cce..35b7d91f8527 100644
+--- a/include/soc/tegra/bpmp.h
++++ b/include/soc/tegra/bpmp.h
+@@ -12,6 +12,7 @@
+ #include <linux/reset-controller.h>
+ #include <linux/semaphore.h>
+ #include <linux/types.h>
++#include <linux/workqueue.h>
+ 
+ #include <soc/tegra/bpmp-abi.h>
+ 
+@@ -101,6 +102,7 @@ struct tegra_bpmp {
+ 
+ #ifdef CONFIG_DEBUG_FS
+ 	struct dentry *debugfs_mirror;
++	struct work_struct debugfs_work;
+ #endif
+ 
+ 	bool suspended;
