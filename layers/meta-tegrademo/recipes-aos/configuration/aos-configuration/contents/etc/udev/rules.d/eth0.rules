@@ -1,0 +1,26 @@
+# Receive tuning for the RTL8168h on eth0, measured with SCTP round trips to
+# the systemcore while AOS ran the vision stack.
+#
+# threaded: on PREEMPT_RT, NET_RX otherwise runs from whichever thread raised
+# it, often ksoftirqd or an RT task's bottom half.  This depends on the
+# kernel's NAPI timer running in hard interrupt context (patch 0010); with
+# both, idle p99 was 337 us, against 931 us unthreaded.
+#
+# napi_defer_hard_irqs/gro_flush_timeout: keep the interrupt masked for two
+# empty polls, re-polling from a 50 us timer, instead of taking an interrupt
+# per packet.
+#
+# limit_max: cap BQL at 60000 bytes, about 0.5 ms at 1 Gbit/s, so a bulk
+# sender can't queue more than that ahead of an SCTP packet.  With the
+# deferral above, p99 under receive load went from 1.84 ms to 877 us.
+#
+# napi-priority@eth0.service then runs the napi thread at SCHED_FIFO 50,
+# alongside the threaded interrupt handlers, rather than SCHED_OTHER.  It
+# exists from the moment threaded is set until the driver removes the device,
+# so link changes keep its priority.
+SUBSYSTEM=="net", ACTION=="add", KERNEL=="eth0", \
+  ATTR{threaded}="1", \
+  ATTR{napi_defer_hard_irqs}="2", \
+  ATTR{gro_flush_timeout}="50000", \
+  ATTR{queues/tx-0/byte_queue_limits/limit_max}="60000", \
+  TAG+="systemd", ENV{SYSTEMD_WANTS}+="napi-priority@%k.service"

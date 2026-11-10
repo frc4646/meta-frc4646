@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the NAPI threads of %i at SCHED_FIFO 50
+# Started by etc/udev/rules.d/eth0.rules once it has made %i's NAPI threaded.
+# udev can't do this itself: systemd-udevd.service has RestrictRealtime=yes,
+# so chrt -f from a RUN+= fails with EPERM.
+BindsTo=sys-subsystem-net-devices-%i.device
+After=sys-subsystem-net-devices-%i.device
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'for pid in $$(/usr/bin/pgrep "^napi/%i-"); do /usr/bin/chrt -f -p 50 $$pid; done'

@@ -36,6 +36,7 @@ do_install() {
     install_content 0644 "etc/modprobe.d/uvc.conf" "root:root"
     install_content 0644 "etc/udev/rules.d/can.rules" "root:root"
     install_content 0644 "etc/udev/rules.d/camera.rules" "root:root"
+    install_content 0644 "etc/udev/rules.d/eth0.rules" "root:root"
     install_content 0644 "etc/systemd/network/80-cana.network" "root:root"
     install_content 0644 "etc/systemd/network/80-canb.network" "root:root"
     install_content 0644 "etc/systemd/network/80-canc.network" "root:root"
@@ -44,6 +45,7 @@ do_install() {
     install_content 0644 "etc/systemd/system/aos.service" "root:root"
     install_content 0644 "etc/systemd/system/aos-chrt.service" "root:root"
     install_content 0644 "etc/systemd/system/jetson-clocks.service" "root:root"
+    install_content 0644 "etc/systemd/system/napi-priority@.service" "root:root"
 
     # There is no hwclock.service: the kernel sets the clock from the RTC at
     # boot (CONFIG_RTC_HCTOSYS), and writes it back every 11 minutes while
@@ -64,6 +66,7 @@ FILES:${PN}:append = " ${base_prefix}/etc/modprobe.d/can.conf"
 FILES:${PN}:append = " ${base_prefix}/etc/modprobe.d/uvc.conf"
 FILES:${PN}:append = " ${base_prefix}/etc/udev/rules.d/can.rules"
 FILES:${PN}:append = " ${base_prefix}/etc/udev/rules.d/camera.rules"
+FILES:${PN}:append = " ${base_prefix}/etc/udev/rules.d/eth0.rules"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/network/80-cana.network"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/network/80-canb.network"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/network/80-canc.network"
@@ -72,3 +75,4 @@ FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/grow-rootfs.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/aos.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/aos-chrt.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/jetson-clocks.service"
+FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/napi-priority@.service"
