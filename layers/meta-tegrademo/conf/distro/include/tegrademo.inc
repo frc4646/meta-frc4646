@@ -3,6 +3,12 @@ DISTRO_NAME = "OE4Tegra Demonstration Distro"
 DISTRO_VERSION_BASE = "6.0.2"
 DISTRO_VERSION = "${DISTRO_VERSION_BASE}+snapshot-${METADATA_REVISION}"
 DISTRO_CODENAME = "wrynose"
+
+# VS Code's Remote SSH picks the glibc or musl build of its server from
+# ldd and /etc/os-release, and without either falls back to Alpine's musl
+# one, which can't run here.
+ID_LIKE = "debian"
+
 SDK_VENDOR = "-tdsdk"
 SDK_VERSION = "${@d.getVar('DISTRO_VERSION').replace('snapshot-${METADATA_REVISION}', 'snapshot')}"
 SDK_VERSION[vardepvalue] = "${SDK_VERSION}"
