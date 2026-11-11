@@ -157,6 +157,7 @@ RDEPENDS:${PN} = " \
     kernel-module-act-skbedit \
     kernel-module-act-mirred \
     kernel-module-act-police \
+    kernel-module-act-gact \
     tshark \
     tegra-bootfiles-dev \
     perf \
