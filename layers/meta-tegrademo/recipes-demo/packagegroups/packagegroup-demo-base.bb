@@ -55,7 +55,6 @@ RDEPENDS:${PN} = " \
     gstreamer1.0-plugins-nveglgles \
     rsync \
     vim \
-    strace \
     media-ctl \
     gstreamer1.0-plugins-bad-dev \
     gstreamer1.0-plugins-bad-webrtc \
@@ -85,22 +84,15 @@ RDEPENDS:${PN} = " \
     git \
     cpufrequtils \
     openssh \
-    rsync \
-    vim \
     libnice-dev \
     feh \
     usbutils \
-    trace-cmd \
     clinfo \
     jq \
-    strace \
-    sysstat \
-    can-utils \
     net-tools \
     ethtool \
     parted \
     file \
-    gdb \
     smartmontools \
     nvme-cli \
     psmisc \
