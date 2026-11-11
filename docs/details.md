@@ -113,28 +113,43 @@ Check all four streams at the configured resolution and frame rate. The
 divisor is read-only after module load; zero is treated as one to avoid a
 kernel divide-by-zero.
 
-## Foxglove over TLS
+## TLS for the robot's servers
 
 The Foxglove web app is served over https, so browsers only let it open
-`wss://` connections, and only to servers with a certificate they trust.
-Each orin is its own CA for that.  `aos-tls.service` runs
-`/root/bin/make_tls_cert.sh` at every boot, which keeps these in
-`/etc/aos/tls`:
+`wss://` connections, and only to servers with a certificate they trust.  The
+same goes for any page the robot serves over https.  `.local` names can't
+get public certificates, so the robot's certificate comes from our own CA,
+constrained so that trusting it grants nothing else.
 
-* `ca.crt` and `ca.key`, made once.  The CA's name constraints permit only
-  `<hostname>.local` and eth0's address, and it can only sign TLS server
-  certificates, so a laptop that trusts it trusts nothing else.  Anyone who
-  can log in can become root and read its key, but all the key can do is
-  impersonate this orin.
+**The team CA.**  `make_team_ca.sh LABEL OUTDIR TEAM...` makes one, once, on
+a trusted machine, for one or more team numbers (real ones, or made up to
+tell robots apart).  Its name constraints permit only `orin-<team>-0` to
+`9.local` and `10.TE.AM.0/24` for each team, its extended key usage only TLS
+servers, and `pathlen:0` forbids sub-CAs.  Keep `ca.key` out of public
+repositories: published, anyone could impersonate the robots to laptops that
+trust the CA (though still nothing else).  After flashing, put it on the
+orin with `install_team_ca.sh pi@orin-1868-1.local OUTDIR`.
+
+**On the orin**, `aos-tls.service` runs `/root/bin/make_tls_cert.sh` at every
+boot, and `change_hostname.sh` runs it after changing the name.  It keeps
+these in `/etc/aos/tls`:
+
+* `ca.crt` and `ca.key`: the team CA (with a `team` file next to them), or,
+  without one, a CA the orin makes for itself, constrained to its own
+  `<hostname>.local` and address (with a `name` file recording them).  An
+  orin's own CA is replaced when the name or address changes; the team CA is
+  kept, and the script fails if the new name is outside its teams.
 * `server.crt`, `server.key` (readable by `pi`, which AOS runs the Foxglove
   server as) and `server-chain.crt`, the certificate followed by the CA.  The
   certificate lasts 397 days, the most macOS accepts, and is reissued within
-  60 days of expiring.
+  60 days of expiring, or when it isn't valid for the current name and
+  address.
 
-`change_hostname.sh` makes a new CA, since the name and address change.  So
-does reflashing.  Every laptop then has to trust the new one.
-
-On each laptop, `./trust_orin.sh orin-1868-1` fetches the CA from the
-Foxglove server, checks that it can vouch for nothing but that orin, and
-installs it for Chrome, Safari, Edge, the Foxglove app and (on Linux)
-Firefox.  `--remove` takes it out again.
+**On each laptop**, `./trust_orin.py orin-1868-1` (Python 3.8 or newer, no
+packages) fetches the CA from the robot, checks that its constraints are
+exactly one of the two shapes above, and installs it for Chrome, Safari,
+Edge, the Foxglove app and (on Linux) Firefox.  It asks before trusting a
+team CA, listing its teams.  `--check` only checks, and `--remove` takes it
+out again.  With the team CA, a laptop trusts all of the team's robots once,
+and renaming or reflashing a robot (followed by `install_team_ca.sh`) needs
+nothing more.

@@ -64,6 +64,8 @@ fi
 /bin/sed -i -e "s/^[0-9.]*\s*orin-[0-9]*\.local$/${IP}\torin-${ORIN_NUMBER}.local/" \
   -e "s/^[0-9.]*\s*orin\.local$/${IP}\torin.local/" /etc/avahi/hosts
 
-# The Foxglove server's CA can only vouch for the hostname and address, so
-# it needs a new one; every laptop has to trust it again (trust_orin.sh).
+# Reissue the TLS certificate for the new name and address.  A team CA
+# keeps vouching for them if the team number is one of its own; without one,
+# the Orin makes a new CA of its own, which laptops have to trust again
+# (trust_orin.py).
 /root/bin/make_tls_cert.sh

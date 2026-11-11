@@ -1,18 +1,22 @@
 #!/bin/bash
-# Makes the certificates AOS's Foxglove server uses for wss://, from a CA
-# that can only vouch for this Orin.
+# Makes the certificate AOS's servers use for https and wss://, from a CA
+# that can only vouch for this team's Orins.
 #
-# The CA's name constraints permit just <hostname>.local and eth0's fixed
-# address, so a laptop that trusts it trusts nothing else; trust_orin.sh
-# checks that before installing it.  The CA's key is then worth no more than
-# the server's: either only impersonates this Orin.
+# Normally that's the team CA, which install_team_ca.sh puts here after
+# flashing (with a "team" file next to it).  Its name constraints permit
+# orin-<team>-0 to 9.local and the team's 10.TE.AM.0/24, so a laptop trusts
+# the whole team once, and renaming or reflashing an Orin doesn't change it.
+# Without one, this makes a CA for this Orin alone: <hostname>.local and
+# eth0's fixed address.  Either way a laptop that trusts the CA trusts
+# nothing else, and trust_orin.py checks that before installing it.
 #
 # Usage: make_tls_cert.sh [--new-ca]
-# aos-tls.service runs it at every boot.  It makes a CA if there is none or
-# the hostname or address changed (change_hostname.sh changes both), and a
-# server certificate if there is none, it isn't valid for them under the
-# current CA, or it expires within 60 days.  --new-ca replaces the CA
-# regardless; every laptop then has to trust the new one.
+# aos-tls.service runs it at every boot, and change_hostname.sh after
+# changing the hostname and address.  It makes an Orin CA if there is no CA,
+# or there is an Orin CA for another name or address, and a server
+# certificate if there is none, it isn't valid for them under the current CA,
+# or it expires within 60 days.  --new-ca replaces the CA, team or not, with
+# a new Orin CA; every laptop then has to trust it.
 
 set -xeuo pipefail
 
@@ -29,8 +33,8 @@ NEW="$(mktemp -d "${DIR}/.new.XXXXXX")"
 trap 'rm -rf "${NEW}"' EXIT
 
 new_ca=0
-if [[ "${1:-}" == "--new-ca" || ! -s "${DIR}/ca.crt" || ! -s "${DIR}/ca.key" ||
-      "$(cat "${DIR}/name" 2>/dev/null)" != "${NAME} ${IP}" ]]; then
+if [[ "${1:-}" == "--new-ca" || ! -s "${DIR}/ca.crt" || ! -s "${DIR}/ca.key" ]] ||
+   [[ ! -e "${DIR}/team" && "$(cat "${DIR}/name" 2>/dev/null)" != "${NAME} ${IP}" ]]; then
   new_ca=1
   cat > "${NEW}/ca.cnf" <<EOF
 [req]
@@ -75,7 +79,13 @@ EOF
   openssl x509 -req -in "${NEW}/server.csr" -days 397 \
     -CA "${CA_DIR}/ca.crt" -CAkey "${CA_DIR}/ca.key" \
     -extfile "${NEW}/server.ext" -out "${NEW}/server.crt"
-  # The server sends the CA along, so trust_orin.sh can fetch it from there.
+  # A team CA can only vouch for its own team's names and addresses.
+  if ! openssl verify -CAfile "${CA_DIR}/ca.crt" -verify_hostname "${NAME}" \
+      -verify_ip "${IP}" "${NEW}/server.crt"; then
+    echo "${DIR}/ca.crt can't vouch for ${NAME} and ${IP}." >&2
+    exit 1
+  fi
+  # The server sends the CA along, so trust_orin.py can fetch it from there.
   cat "${NEW}/server.crt" "${CA_DIR}/ca.crt" > "${NEW}/server-chain.crt"
   # AOS runs the Foxglove server as pi.
   if getent group pi > /dev/null; then
@@ -87,6 +97,7 @@ fi
 
 if [[ "${new_ca}" == 1 ]]; then
   chmod 0644 "${NEW}/ca.crt" "${NEW}/name"
+  rm -f "${DIR}/team"
   mv -f "${NEW}/ca.key" "${NEW}/ca.crt" "${NEW}/name" "${DIR}/"
 fi
 for f in server.key server.crt server-chain.crt; do
