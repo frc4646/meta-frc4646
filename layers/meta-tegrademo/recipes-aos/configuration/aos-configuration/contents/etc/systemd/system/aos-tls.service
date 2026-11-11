@@ -1,0 +1,12 @@
+[Unit]
+Description=Make the TLS certificates for AOS's Foxglove server
+After=local-fs.target
+Before=aos.service
+
+[Service]
+Type=oneshot
+ExecStart=/root/bin/make_tls_cert.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

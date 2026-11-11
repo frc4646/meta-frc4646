@@ -13,7 +13,7 @@ S = "${UNPACKDIR}"
 inherit systemd
 
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
-SYSTEMD_SERVICE:${PN} = "grow-rootfs.service jetson-clocks.service aos.service aos-chrt.service"
+SYSTEMD_SERVICE:${PN} = "grow-rootfs.service jetson-clocks.service aos.service aos-chrt.service aos-tls.service"
 
 ROOT = "${D}${base_prefix}"
 
@@ -28,6 +28,7 @@ do_install() {
 
     install_content 0500 "root/bin/change_hostname.sh" "root:root"
     install_content 0500 "root/bin/chrt.sh" "root:root"
+    install_content 0500 "root/bin/make_tls_cert.sh" "root:root"
 
     install_content 0644 "etc/sysctl.d/sctp.conf" "root:root"
     install_content 0644 "etc/modules-load.d/sctp.conf" "root:root"
@@ -41,6 +42,7 @@ do_install() {
     install_content 0644 "etc/systemd/system/grow-rootfs.service" "root:root"
     install_content 0644 "etc/systemd/system/aos.service" "root:root"
     install_content 0644 "etc/systemd/system/aos-chrt.service" "root:root"
+    install_content 0644 "etc/systemd/system/aos-tls.service" "root:root"
     install_content 0644 "etc/systemd/system/jetson-clocks.service" "root:root"
     install_content 0644 "etc/systemd/system/napi-priority@.service" "root:root"
 
@@ -54,6 +56,7 @@ do_install() {
 RDEPENDS:${PN} += " git"
 RDEPENDS:${PN} += " bash-completion git-bash-completion"
 RDEPENDS:${PN} += " bash"
+RDEPENDS:${PN} += " openssl-bin"
 
 FILES:${PN} = "${base_prefix}${ROOT_HOME}/"
 FILES:${PN}:append = " ${base_prefix}${ROOT_HOME}/bin/"
@@ -69,5 +72,6 @@ FILES:${PN}:append = " ${base_prefix}/etc/udev/rules.d/99-usb-mount.rules"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/grow-rootfs.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/aos.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/aos-chrt.service"
+FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/aos-tls.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/jetson-clocks.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/napi-priority@.service"

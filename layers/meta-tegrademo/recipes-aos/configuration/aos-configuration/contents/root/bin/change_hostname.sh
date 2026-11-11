@@ -63,3 +63,7 @@ fi
 # ${HOSTNAME}.local.
 /bin/sed -i -e "s/^[0-9.]*\s*orin-[0-9]*\.local$/${IP}\torin-${ORIN_NUMBER}.local/" \
   -e "s/^[0-9.]*\s*orin\.local$/${IP}\torin.local/" /etc/avahi/hosts
+
+# The Foxglove server's CA can only vouch for the hostname and address, so
+# it needs a new one; every laptop has to trust it again (trust_orin.sh).
+/root/bin/make_tls_cert.sh

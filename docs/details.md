@@ -112,3 +112,29 @@ bandwidth workaround, not evidence that four simultaneous streams will fit.
 Check all four streams at the configured resolution and frame rate. The
 divisor is read-only after module load; zero is treated as one to avoid a
 kernel divide-by-zero.
+
+## Foxglove over TLS
+
+The Foxglove web app is served over https, so browsers only let it open
+`wss://` connections, and only to servers with a certificate they trust.
+Each orin is its own CA for that.  `aos-tls.service` runs
+`/root/bin/make_tls_cert.sh` at every boot, which keeps these in
+`/etc/aos/tls`:
+
+* `ca.crt` and `ca.key`, made once.  The CA's name constraints permit only
+  `<hostname>.local` and eth0's address, and it can only sign TLS server
+  certificates, so a laptop that trusts it trusts nothing else.  Anyone who
+  can log in can become root and read its key, but all the key can do is
+  impersonate this orin.
+* `server.crt`, `server.key` (readable by `pi`, which AOS runs the Foxglove
+  server as) and `server-chain.crt`, the certificate followed by the CA.  The
+  certificate lasts 397 days, the most macOS accepts, and is reissued within
+  60 days of expiring.
+
+`change_hostname.sh` makes a new CA, since the name and address change.  So
+does reflashing.  Every laptop then has to trust the new one.
+
+On each laptop, `./trust_orin.sh orin-1868-1` fetches the CA from the
+Foxglove server, checks that it can vouch for nothing but that orin, and
+installs it for Chrome, Safari, Edge, the Foxglove app and (on Linux)
+Firefox.  `--remove` takes it out again.
