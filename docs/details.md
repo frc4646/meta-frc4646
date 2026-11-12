@@ -130,9 +130,9 @@ repositories: published, anyone could impersonate the robots to laptops that
 trust the CA (though still nothing else).  After flashing, put it on the
 orin with `install_team_ca.sh pi@orin-1868-1.local OUTDIR`.
 
-**On the orin**, `aos-tls.service` runs `/root/bin/make_tls_cert.sh` at every
-boot, and `change_hostname.sh` runs it after changing the name.  It keeps
-these in `/etc/aos/tls`:
+**On the orin**, `aos-tls.service` runs `/usr/local/bin/aos_make_tls_cert` at
+every boot, and `change_hostname.sh` runs it after changing the name.  It
+keeps these in `/etc/aos/tls`:
 
 * `ca.crt` and `ca.key`: the team CA (with a `team` file next to them), or,
   without one, a CA the orin makes for itself, constrained to its own

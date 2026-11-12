@@ -26,5 +26,5 @@ tar -C "${CA_DIR}" -c ca.crt ca.key | ssh "${DEST}" '
   sudo touch "${T}/team"
   sudo rm -f "${T}/name"
   sudo rmdir "${NEW}"
-  sudo /root/bin/make_tls_cert.sh
+  sudo /usr/local/bin/aos_make_tls_cert
 '

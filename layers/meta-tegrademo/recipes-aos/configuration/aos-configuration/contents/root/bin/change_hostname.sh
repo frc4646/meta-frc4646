@@ -68,4 +68,4 @@ fi
 # keeps vouching for them if the team number is one of its own; without one,
 # the Orin makes a new CA of its own, which laptops have to trust again
 # (trust_orin.py).
-/root/bin/make_tls_cert.sh
+/usr/local/bin/aos_make_tls_cert

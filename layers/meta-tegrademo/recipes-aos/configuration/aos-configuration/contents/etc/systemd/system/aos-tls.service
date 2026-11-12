@@ -5,7 +5,7 @@ Before=aos.service
 
 [Service]
 Type=oneshot
-ExecStart=/root/bin/make_tls_cert.sh
+ExecStart=/usr/local/bin/aos_make_tls_cert
 RemainAfterExit=yes
 
 [Install]

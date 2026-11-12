@@ -28,7 +28,7 @@ do_install() {
 
     install_content 0500 "root/bin/change_hostname.sh" "root:root"
     install_content 0500 "root/bin/chrt.sh" "root:root"
-    install_content 0500 "root/bin/make_tls_cert.sh" "root:root"
+    install_content 0755 "usr/local/bin/aos_make_tls_cert" "root:root"
 
     install_content 0644 "etc/sysctl.d/sctp.conf" "root:root"
     install_content 0644 "etc/modules-load.d/sctp.conf" "root:root"
@@ -60,6 +60,7 @@ RDEPENDS:${PN} += " openssl-bin"
 
 FILES:${PN} = "${base_prefix}${ROOT_HOME}/"
 FILES:${PN}:append = " ${base_prefix}${ROOT_HOME}/bin/"
+FILES:${PN}:append = " ${base_prefix}/usr/local/bin/aos_make_tls_cert"
 FILES:${PN}:append = " ${base_prefix}/etc/sysctl.d/sctp.conf"
 FILES:${PN}:append = " ${base_prefix}/etc/modules-load.d/sctp.conf"
 FILES:${PN}:append = " ${base_prefix}/etc/bash_completion.d/aos_dump_autocomplete"

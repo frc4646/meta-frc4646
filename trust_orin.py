@@ -11,7 +11,7 @@ The CA is one of two kinds:
   covers one or more team numbers: orin-<team>-0 to 9.local and the team's
   10.TE.AM.0/24 for each.
 * An Orin's own CA, which an Orin without a team CA makes for itself
-  (make_tls_cert.sh in the image).  It covers <hostname>.local and the
+  (aos_make_tls_cert in the image).  It covers <hostname>.local and the
   Orin's address.
 
 This installs the CA only if its name constraints permit exactly one of

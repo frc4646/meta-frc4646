@@ -10,7 +10,7 @@
 # eth0's fixed address.  Either way a laptop that trusts the CA trusts
 # nothing else, and trust_orin.py checks that before installing it.
 #
-# Usage: make_tls_cert.sh [--new-ca]
+# Usage: aos_make_tls_cert [--new-ca]
 # aos-tls.service runs it at every boot, and change_hostname.sh after
 # changing the hostname and address.  It makes an Orin CA if there is no CA,
 # or there is an Orin CA for another name or address, and a server
