@@ -150,10 +150,12 @@ RDEPENDS:${PN} = " \
     kernel-module-act-mirred \
     kernel-module-act-police \
     kernel-module-act-gact \
+    kernel-module-kheaders \
     tshark \
     tegra-bootfiles-dev \
     perf \
     bpftrace \
+    bpftool \
     kexec \
     rt-tests \
     stress-ng \

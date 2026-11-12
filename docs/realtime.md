@@ -23,7 +23,8 @@ newest 6.18 linux-yocto has.  The measurements below were made on 6.18.39.
 root cgroup can use `SCHED_FIFO` under cgroup v2, and AOS runs in
 `aos.service`'s cgroup.
 
-`config_btf.cfg` adds BTF, so `bpftrace` can read kernel structures.
+`config_btf.cfg` adds BTF, so `bpftrace` can read kernel structures, and the
+kernel headers as the `kheaders` module, which the bcc tools compile against.
 
 The command line sets `kpti=0`.  KASLR otherwise forces kernel page table
 isolation on, which switches page tables on every system call, and the
@@ -123,8 +124,9 @@ than the AprilTag detector's GPU work.  Leaving it powered costs about 0.15 W.
 
 ## Measuring
 
-The image has `rt-tests` (`cyclictest`), `stress-ng`, `perf`, `bpftrace`,
-`iperf3` and `linuxptp`.  The timerlat and osnoise tracers are in tracefs;
+The image has `rt-tests` (`cyclictest`), `stress-ng`, `perf`, `bpftrace` (with
+its tools in `/usr/share/bpftrace/tools`), the bcc tools (in
+`/usr/share/bcc/tools`), `bpftool`, `iperf3` and `linuxptp`.  The timerlat and osnoise tracers are in tracefs;
 `chrt.sh` makes `/sys/kernel/tracing` writable by everyone, so AOS's
 `--enable_ftrace` works without root.
 
