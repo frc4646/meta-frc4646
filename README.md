@@ -1,10 +1,10 @@
-# tegra-demo-distro
+# meta-frc4646
 
-Reference/demo distribution for NVIDIA Jetson platforms
-using Yocto Project tools and the [meta-tegra](https://github.com/OE4T/meta-tegra) BSP layer.
-
-This fork builds the image AOS runs on: an Orin Nano 8GB on a Seeed Studio
-J401 carrier, with a mainline `PREEMPT_RT` kernel.
+The image AOS runs on: an Orin Nano 8GB on a Seeed Studio J401 carrier, with
+a mainline `PREEMPT_RT` kernel.  It is built with Yocto Project tools and the
+[meta-tegra](https://github.com/OE4T/meta-tegra) BSP layer, and started from
+the [tegra-demo-distro](https://github.com/OE4T/tegra-demo-distro) reference
+distribution.
 
 * [docs/details.md](docs/details.md): how the image is put together (root
   filesystem, kernel, boot time, UEFI, camera debugging).
