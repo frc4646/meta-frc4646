@@ -116,8 +116,9 @@ apply:
 
 ## GPU and clocks
 
-`jetson-clocks.service` runs every clock at its maximum, including the memory
-controller, so frequency changes don't add latency.  It also keeps the GPU's
+`jetson-clocks.service` runs every clock at its maximum, so frequency changes
+don't add latency.  `jetson-clocks-emc.path` pins the memory controller's clock
+too, once the BPMP's debugfs is filled in.  `jetson-clocks.service` also keeps the GPU's
 graphics engine powered between frames: with power gating on, it powered down
 between 60 Hz camera frames and every frame paid about 0.4 ms to wake it, more
 than the AprilTag detector's GPU work.  Leaving it powered costs about 0.15 W.

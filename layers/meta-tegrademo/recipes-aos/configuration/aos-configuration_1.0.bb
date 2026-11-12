@@ -13,7 +13,7 @@ S = "${UNPACKDIR}"
 inherit systemd
 
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
-SYSTEMD_SERVICE:${PN} = "grow-rootfs.service jetson-clocks.service aos.service aos-chrt.service aos-tls.service"
+SYSTEMD_SERVICE:${PN} = "grow-rootfs.service jetson-clocks.service jetson-clocks-emc.path aos.service aos-chrt.service aos-tls.service"
 
 ROOT = "${D}${base_prefix}"
 
@@ -44,6 +44,8 @@ do_install() {
     install_content 0644 "etc/systemd/system/aos-chrt.service" "root:root"
     install_content 0644 "etc/systemd/system/aos-tls.service" "root:root"
     install_content 0644 "etc/systemd/system/jetson-clocks.service" "root:root"
+    install_content 0644 "etc/systemd/system/jetson-clocks-emc.path" "root:root"
+    install_content 0644 "etc/systemd/system/jetson-clocks-emc.service" "root:root"
     install_content 0644 "etc/systemd/system/napi-priority@.service" "root:root"
 
     # There is no hwclock.service: the kernel sets the clock from the RTC at
@@ -75,4 +77,6 @@ FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/aos.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/aos-chrt.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/aos-tls.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/jetson-clocks.service"
+FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/jetson-clocks-emc.path"
+FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/jetson-clocks-emc.service"
 FILES:${PN}:append = " ${base_prefix}/etc/systemd/system/napi-priority@.service"

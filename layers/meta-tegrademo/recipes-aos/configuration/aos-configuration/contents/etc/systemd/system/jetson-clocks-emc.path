@@ -1,0 +1,13 @@
+[Install]
+WantedBy=multi-user.target
+
+[Unit]
+Description=Wait for the BPMP's debugfs to pin the memory clock
+# The kernel fills in the BPMP's debugfs mirror after boot
+# (bpmp-debugfs-async.scc) and renames it to debug once it is complete, a
+# few seconds after userspace starts.
+RequiresMountsFor=/sys/kernel/debug
+
+[Path]
+PathExists=/sys/kernel/debug/bpmp/debug
+Unit=jetson-clocks-emc.service
