@@ -4,7 +4,7 @@ WantedBy=multi-user.target
 [Unit]
 Description=Service to pin the device to max clock rate
 Requires=nvpmodel.service nvfancontrol.service
-After=nvpmodel.service nvfancontrol.service
+After=nvpmodel.service nvfancontrol.service sys-kernel-debug.mount
 
 [Service]
 Type=oneshot
@@ -13,7 +13,10 @@ Type=oneshot
 # TODO(austin): is nvpmodel doing that for us?
 ExecStart=/usr/bin/jetson_clocks
 
-# Pin the memory clock to max too.
+# Pin the memory clock to max too.  That goes through the BPMP's debugfs
+# mirror, which the kernel fills in after boot (bpmp-debugfs-async.scc) and
+# renames to debug once it is complete, a few seconds after userspace starts.
+ExecStart=bash -c 'for i in $$(seq 300); do [[ -d /sys/kernel/debug/bpmp/debug ]] && exit 0; sleep 0.1; done; echo "No BPMP debugfs after 30 seconds" >&2; exit 1'
 ExecStart=bash -c 'echo 1 > /sys/kernel/debug/bpmp/debug/clk/emc/mrq_rate_locked'
 ExecStart=bash -c 'cat /sys/kernel/debug/bpmp/debug/clk/emc/max_rate | tee /sys/kernel/debug/bpmp/debug/clk/emc/rate'
 
