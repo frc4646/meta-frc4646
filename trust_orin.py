@@ -39,7 +39,8 @@ import subprocess
 import sys
 import tempfile
 
-PORT = int(os.environ.get("FOXGLOVE_PORT", "8765"))
+# The Orin's https server.  Every TLS server on it sends the same chain.
+PORT = int(os.environ.get("ORIN_TLS_PORT", "443"))
 
 OID_CN = "2.5.4.3"
 OID_BASIC_CONSTRAINTS = "2.5.29.19"
@@ -385,7 +386,8 @@ def main():
             return
     uninstall(cn)
     install(cn, cert.der)
-    print(f"Trusted {cn}.  Foxglove: wss://{host}.local:{PORT}")
+    url = f"https://{host}.local" + ("" if PORT == 443 else f":{PORT}")
+    print(f"Trusted {cn}.  Try {url}/")
 
 
 if __name__ == "__main__":
